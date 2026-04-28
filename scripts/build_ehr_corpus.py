@@ -11,7 +11,7 @@ from tqdm import tqdm
 from src.config import PATIENTS_ROOT, PROCESSED_DIR
 from src.path_parser import parse_pdf_path
 from src.pdf_extract import extract_pdf_text
-from src.chunking import chunk_text
+from src.chunking import chunk_text_with_sections
 
 
 ERRORS_FILE = PROCESSED_DIR / "build_ehr_corpus.errors.jsonl"
@@ -83,9 +83,6 @@ def main():
          chunks_out.open("a", encoding="utf-8") as f_chunk:
 
         for patient_dir in tqdm(patient_dirs, desc="Patients"):
-            
-            
-            
             patient_folder_name = patient_dir.name
             patient_uid = make_patient_uid(patient_folder_name)
             actual_patient_id = extract_actual_patient_id(patient_folder_name)
@@ -117,8 +114,10 @@ def main():
                     f_doc.write(json.dumps(doc_record, ensure_ascii=False) + "\n")
 
                     for page in pages:
-                        page_chunks = chunk_text(page["text"])
+                        page_chunks = chunk_text_with_sections(page["text"])
                         for idx, ch in enumerate(page_chunks):
+                            section_title = ch.get("section_title")
+                            section_key = section_title or "none"
                             chunk_record = {
                                 "patient_id": patient_uid,
                                 "actual_patient_id": actual_patient_id,
@@ -126,8 +125,10 @@ def main():
                                 "pdf_path": pdf_path_str,
                                 **path_meta,
                                 "page_num": page["page_num"],
-                                "chunk_id": f"{patient_uid}::{pdf_path.stem}::p{page['page_num']}::c{idx}",
-                                "chunk_text": ch,
+                                "section_title": section_title,
+                                "section_chunk_index": ch.get("section_chunk_index"),
+                                "chunk_id": f"{patient_uid}::{pdf_path.stem}::p{page['page_num']}::s{section_key}::c{idx}",
+                                "chunk_text": ch["chunk_text"],
                             }
                             f_chunk.write(json.dumps(chunk_record, ensure_ascii=False) + "\n")
 
