@@ -17,6 +17,7 @@ from src.config import (
 )
 from src.medcpt_embed import MedCPTEncoder
 from src.encoder_client import embed_query_texts
+from src.retrieval_planner import build_retrieval_plan
 
 
 class MedCPTReranker:
@@ -88,7 +89,7 @@ def resolve_patient_identifier(patient_identifier: str) -> tuple[str, str]:
 
     Supports either:
     - actual patient ID from folder name, e.g. 021494762
-    - full folder name, e.g. Test 1 - 021494762
+    - full patient folder name, e.g. Test 1 - 021494762
     - legacy hashed patient_id, e.g. patient_708d3d65ee7b4cc9
     """
     patient_identifier = patient_identifier.strip()
@@ -102,38 +103,97 @@ def resolve_patient_identifier(patient_identifier: str) -> tuple[str, str]:
     return "actual_patient_id", patient_identifier
 
 
+def build_filter(patient_id: str | None = None, document_type: str | None = None) -> Filter | None:
+    must = []
+
+    if patient_id:
+        filter_key, filter_value = resolve_patient_identifier(patient_id)
+        must.append(
+            FieldCondition(
+                key=filter_key,
+                match=MatchValue(value=filter_value),
+            )
+        )
+
+    if document_type:
+        must.append(
+            FieldCondition(
+                key="document_type",
+                match=MatchValue(value=document_type),
+            )
+        )
+
+    if not must:
+        return None
+
+    return Filter(must=must)
+
+
+def query_qdrant(client: QdrantClient, query_text: str, patient_id: str | None, document_type: str | None, limit: int):
+    qvec = embed_query_texts([query_text])[0]
+    return client.query_points(
+        collection_name=COLLECTION_NAME,
+        query=qvec,
+        query_filter=build_filter(patient_id=patient_id, document_type=document_type),
+        limit=limit,
+    ).points
+
+
+def collect_planned_hits(client: QdrantClient, patient_id: str | None, question: str, limit_per_query: int = 12):
+    """Run CLI-RAG-style planned retrieval, with broad fallback for older indexes."""
+    plan = build_retrieval_plan(question)
+    hits_by_chunk_id = {}
+
+    # Targeted global/local-ish search: subquery x document_type.
+    for subquery in plan.subqueries:
+        for document_type in plan.target_document_types:
+            try:
+                hits = query_qdrant(
+                    client=client,
+                    query_text=subquery,
+                    patient_id=patient_id,
+                    document_type=document_type,
+                    limit=limit_per_query,
+                )
+            except Exception:
+                hits = []
+
+            for hit in hits:
+                chunk_id = hit.payload.get("chunk_id")
+                if chunk_id and chunk_id not in hits_by_chunk_id:
+                    hits_by_chunk_id[chunk_id] = hit
+
+    # Broad fallback is important for pre-existing indexes that do not yet have
+    # document_type payloads, and for questions not covered by deterministic rules.
+    for subquery in plan.subqueries[:3]:
+        hits = query_qdrant(
+            client=client,
+            query_text=subquery,
+            patient_id=patient_id,
+            document_type=None,
+            limit=50 if patient_id else 100,
+        )
+        for hit in hits:
+            chunk_id = hit.payload.get("chunk_id")
+            if chunk_id and chunk_id not in hits_by_chunk_id:
+                hits_by_chunk_id[chunk_id] = hit
+
+    return list(hits_by_chunk_id.values()), plan
+
+
 def answer_question(patient_id: str | None, question: str):
-    
     reranker = get_reranker()
     client = get_qdrant_client()
     llm = get_llm_client()
 
-    qvec = embed_query_texts([question])[0]
-
-    query_filter = None
-    if patient_id:
-        filter_key, filter_value = resolve_patient_identifier(patient_id)
-        query_filter = Filter(
-            must=[
-                FieldCondition(
-                    key=filter_key,
-                    match=MatchValue(value=filter_value)
-                )
-            ]
-        )
-
-    initial_hits = client.query_points(
-        collection_name=COLLECTION_NAME,
-        query=qvec,
-        query_filter=query_filter,
-        limit=50 if patient_id else 100,
-    ).points
+    initial_hits, plan = collect_planned_hits(client, patient_id, question)
 
     if not initial_hits:
         scope = f"patient identifier: {patient_id}" if patient_id else "the full corpus"
         return {
             "answer": f"No matching chunks found for {scope}.",
             "sources": [],
+            "retrieval_plan": plan.to_dict(),
         }
 
     docs = [h.payload.get("chunk_text", "") for h in initial_hits]
@@ -154,6 +214,8 @@ def answer_question(patient_id: str | None, question: str):
         p = hit.payload
         evidence_blocks.append(
             f"[{i}] rerank_score={rr_score:.4f} "
+            f"document_type={p.get('document_type', 'unknown')} "
+            f"section={p.get('section_title')} "
             f"path={p.get('relative_path')} "
             f"page={p.get('page_num')}\n"
             f"{p.get('chunk_text')}"
@@ -163,17 +225,24 @@ def answer_question(patient_id: str | None, question: str):
                 "relative_path": p.get("relative_path"),
                 "page_num": p.get("page_num"),
                 "chunk_id": p.get("chunk_id"),
+                "document_type": p.get("document_type"),
+                "section_title": p.get("section_title"),
+                "rerank_score": rr_score,
             }
         )
 
     prompt = f"""
-You are answering questions about one patient only.
+You are answering questions about one patient or one local EHR corpus.
 
 Rules:
 - Use only the evidence below.
 - If the answer is uncertain, say so.
 - Cite evidence using the bracket numbers.
 - Do not invent facts.
+- If relevant evidence is absent, explicitly say it was not found in the retrieved evidence.
+
+Retrieval plan:
+{plan.to_dict()}
 
 Question:
 {question}
@@ -191,4 +260,5 @@ Evidence:
     return {
         "answer": resp.choices[0].message.content,
         "sources": sources,
+        "retrieval_plan": plan.to_dict(),
     }
