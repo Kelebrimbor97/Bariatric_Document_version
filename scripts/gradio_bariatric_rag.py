@@ -238,7 +238,7 @@ def main():
         ckpt_dir=os.environ.get(
             "BIOMEDCLIP_CKPT_DIR",
             str(
-                root.parent
+                Path.home()
                 / "LLM_Weights"
                 / "BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
             ),
