@@ -8,6 +8,9 @@ QDRANT_URL="${QDRANT_URL:-http://localhost:6333}"
 VLLM_BASE_URL="${VLLM_BASE_URL:-http://localhost:8000/v1}"
 VLLM_MODEL_NAME="${VLLM_MODEL_NAME:-qwen-ehr}"
 ENCODER_API_URL="${ENCODER_API_URL:-http://localhost:8092}"
+LLM_WEIGHTS_DIR="${LLM_WEIGHTS_DIR:-$PROJECT_DIR/LLM_Weights}"
+BIOMEDCLIP_CKPT_DIR="${BIOMEDCLIP_CKPT_DIR:-$LLM_WEIGHTS_DIR/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224}"
+BIOMEDBERT_TOKENIZER_PATH="${BIOMEDBERT_TOKENIZER_PATH:-$LLM_WEIGHTS_DIR/BiomedNLP-BiomedBERT-base-uncased-abstract}"
 
 cd "$PROJECT_DIR"
 mkdir -p logs
@@ -40,6 +43,8 @@ nohup env \
   VLLM_MODEL_NAME="$VLLM_MODEL_NAME" \
   QDRANT_URL="$QDRANT_URL" \
   ENCODER_API_URL="$ENCODER_API_URL" \
+  BIOMEDCLIP_CKPT_DIR="$BIOMEDCLIP_CKPT_DIR" \
+  BIOMEDBERT_TOKENIZER_PATH="$BIOMEDBERT_TOKENIZER_PATH" \
   uvicorn api_ehr_rag:app --host 0.0.0.0 --port 8090 --workers 1 \
   > logs/api_ehr_rag.log 2>&1 &
 
@@ -53,6 +58,8 @@ nohup env \
   VLLM_BASE_URL="$VLLM_BASE_URL" \
   VLLM_MODEL_NAME="$VLLM_MODEL_NAME" \
   ENCODER_API_URL="$ENCODER_API_URL" \
+  BIOMEDCLIP_CKPT_DIR="$BIOMEDCLIP_CKPT_DIR" \
+  BIOMEDBERT_TOKENIZER_PATH="$BIOMEDBERT_TOKENIZER_PATH" \
   uvicorn api_literature_rag:app --host 0.0.0.0 --port 8093 --workers 1 \
   > logs/api_literature_rag.log 2>&1 &
 

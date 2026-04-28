@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -131,7 +132,16 @@ def main() -> None:
     ap.add_argument(
         "--ckpt_dir",
         type=Path,
-        default=project_root.parent / "LLM_Weights" / "BiomedCLIP-PubMedBERT_256-vit_base_patch16_224",
+        default=Path(
+            os.getenv(
+                "BIOMEDCLIP_CKPT_DIR",
+                str(
+                    project_root.parent
+                    / "LLM_Weights"
+                    / "BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
+                ),
+            )
+        ),
     )
     ap.add_argument("--model_name", type=str, default="biomedclip_local")
 

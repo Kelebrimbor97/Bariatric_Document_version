@@ -30,6 +30,29 @@ Model weights:
 $LLM_WEIGHTS_DIR
 ```
 
+### How `LLM_Weights` parameterization works
+
+The repository now treats model weights as an environment-driven root folder:
+
+- `LLM_WEIGHTS_DIR` is the **single base path** for local model assets.
+- If unset, code defaults to: `../LLM_Weights` relative to repo root (for this repo: `.../Bariatric_Document_version/../LLM_Weights`).
+- Component-specific model paths are derived from this base unless explicitly overridden:
+  - `MEDCPT_QUERY_MODEL` -> `$LLM_WEIGHTS_DIR/MedCPT-Query-Encoder`
+  - `MEDCPT_ARTICLE_MODEL` -> `$LLM_WEIGHTS_DIR/MedCPT-Article-Encoder`
+  - `MEDCPT_RERANK_MODEL` -> `$LLM_WEIGHTS_DIR/MedCPT-Cross-Encoder`
+  - `HF_CACHE_DIR` -> defaults to `$LLM_WEIGHTS_DIR`
+- `LLM_WEIGHTS_DIR` is only a default base. You can independently override each model location:
+  - **LLM**: `VLLM_MODEL_PATH` (container path, e.g. `/llm_weights/Qwen3.6-35B-A3B`)
+  - **VLM** (BioMedCLIP scripts): `BIOMEDCLIP_CKPT_DIR`
+  - **Encoders** (MedCPT): `MEDCPT_QUERY_MODEL`, `MEDCPT_ARTICLE_MODEL`, `MEDCPT_RERANK_MODEL`
+
+Containerized vLLM mount behavior:
+
+- `docker-compose.yml` mounts `${LLM_WEIGHTS_DIR:-./LLM_Weights}` into `/llm_weights` inside the container.
+- That means:
+  - if `LLM_WEIGHTS_DIR` is exported, Docker uses it;
+  - otherwise Docker expects `./LLM_Weights` under the repository root.
+
 OpenWebUI:
 
 ```text
