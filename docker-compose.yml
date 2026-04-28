@@ -18,16 +18,16 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - /home/nishad/LLM_Weights:/llm_weights
+      - ${LLM_WEIGHTS_DIR:-./LLM_Weights}:/llm_weights
     gpus: all
     command: >
-      --model /llm_weights/Qwen3.6-35B-A3B
-      --served-model-name qwen-ehr
+      --model ${VLLM_MODEL_PATH:-/llm_weights/Qwen3.6-35B-A3B}
+      --served-model-name ${VLLM_MODEL_NAME:-qwen-ehr}
       --host 0.0.0.0
       --port 8000
-      --gpu-memory-utilization 0.8
-      --tensor-parallel-size 2
-      --reasoning-parser qwen3
+      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.8}
+      --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE:-2}
+      --reasoning-parser ${VLLM_REASONING_PARSER:-qwen3}
       --enable-prefix-caching
 
     deploy:

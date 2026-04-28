@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="/home/nishad/Bariatric/Document_version"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONDA_SH="$HOME/anaconda3/etc/profile.d/conda.sh"
 CONDA_ENV="ehr_rag"
+QDRANT_URL="${QDRANT_URL:-http://localhost:6333}"
+VLLM_BASE_URL="${VLLM_BASE_URL:-http://localhost:8000/v1}"
+VLLM_MODEL_NAME="${VLLM_MODEL_NAME:-qwen-ehr}"
+ENCODER_API_URL="${ENCODER_API_URL:-http://localhost:8092}"
+LLM_WEIGHTS_DIR="${LLM_WEIGHTS_DIR:-$PROJECT_DIR/LLM_Weights}"
+BIOMEDCLIP_CKPT_DIR="${BIOMEDCLIP_CKPT_DIR:-$LLM_WEIGHTS_DIR/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224}"
+BIOMEDBERT_TOKENIZER_PATH="${BIOMEDBERT_TOKENIZER_PATH:-$LLM_WEIGHTS_DIR/BiomedNLP-BiomedBERT-base-uncased-abstract}"
 
 cd "$PROJECT_DIR"
 mkdir -p logs
@@ -26,16 +33,18 @@ nohup env PYTHONPATH=. uvicorn api_encoder:app --host 0.0.0.0 --port 8092 --work
   > logs/api_encoder.log 2>&1 &
 
 sleep 8
-curl -fsS http://localhost:8092/health >/dev/null
+curl -fsS "${ENCODER_API_URL%/}/health" >/dev/null
 echo "Encoder API OK"
 
 echo "=== Starting EHR RAG API on 8090 ==="
 nohup env \
   PYTHONPATH=. \
-  VLLM_BASE_URL=http://localhost:8000/v1 \
-  VLLM_MODEL_NAME=qwen-ehr \
-  QDRANT_URL=http://localhost:6333 \
-  ENCODER_API_URL=http://localhost:8092 \
+  VLLM_BASE_URL="$VLLM_BASE_URL" \
+  VLLM_MODEL_NAME="$VLLM_MODEL_NAME" \
+  QDRANT_URL="$QDRANT_URL" \
+  ENCODER_API_URL="$ENCODER_API_URL" \
+  BIOMEDCLIP_CKPT_DIR="$BIOMEDCLIP_CKPT_DIR" \
+  BIOMEDBERT_TOKENIZER_PATH="$BIOMEDBERT_TOKENIZER_PATH" \
   uvicorn api_ehr_rag:app --host 0.0.0.0 --port 8090 --workers 1 \
   > logs/api_ehr_rag.log 2>&1 &
 
@@ -46,9 +55,11 @@ echo "EHR API OK"
 echo "=== Starting Literature Approval RAG API on 8093 ==="
 nohup env \
   PYTHONPATH=. \
-  VLLM_BASE_URL=http://localhost:8000/v1 \
-  VLLM_MODEL_NAME=qwen-ehr \
-  ENCODER_API_URL=http://localhost:8092 \
+  VLLM_BASE_URL="$VLLM_BASE_URL" \
+  VLLM_MODEL_NAME="$VLLM_MODEL_NAME" \
+  ENCODER_API_URL="$ENCODER_API_URL" \
+  BIOMEDCLIP_CKPT_DIR="$BIOMEDCLIP_CKPT_DIR" \
+  BIOMEDBERT_TOKENIZER_PATH="$BIOMEDBERT_TOKENIZER_PATH" \
   uvicorn api_literature_rag:app --host 0.0.0.0 --port 8093 --workers 1 \
   > logs/api_literature_rag.log 2>&1 &
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -23,11 +24,14 @@ class EmbedResponse(BaseModel):
     model_type: Literal["query", "article"]
 
 
-print("[INIT] Loading MedCPT query encoder on cuda:1 ...")
-QUERY_ENCODER = MedCPTEncoder(MEDCPT_QUERY_MODEL, device="cuda:1")
+query_device = os.getenv("QUERY_EMBED_DEVICE", os.getenv("EMBED_DEVICE"))
+article_device = os.getenv("ARTICLE_EMBED_DEVICE", os.getenv("EMBED_DEVICE"))
 
-print("[INIT] Loading MedCPT article encoder on cuda:1 ...")
-ARTICLE_ENCODER = MedCPTEncoder(MEDCPT_ARTICLE_MODEL, device="cuda:1")
+print(f"[INIT] Loading MedCPT query encoder on {query_device or 'auto'} ...")
+QUERY_ENCODER = MedCPTEncoder(MEDCPT_QUERY_MODEL, device=query_device)
+
+print(f"[INIT] Loading MedCPT article encoder on {article_device or 'auto'} ...")
+ARTICLE_ENCODER = MedCPTEncoder(MEDCPT_ARTICLE_MODEL, device=article_device)
 
 
 @app.get("/health")

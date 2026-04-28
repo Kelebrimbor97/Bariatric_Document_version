@@ -8,7 +8,8 @@ set -euo pipefail
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate ehr_rag
-cd /home/nishad/Bariatric/Document_version
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_DIR"
 
 mkdir -p logs
 

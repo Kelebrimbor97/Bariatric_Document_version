@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple, Optional
@@ -146,9 +147,21 @@ class BiomedCLIPTextEmbedder:
     def __init__(
         self,
         device: Optional[str] = None,
-        ckpt_dir: str = "/home/nishad/LLM_Weights/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224",
+        ckpt_dir: str | None = None,
         model_name: str = "biomedclip_local",
     ):
+        default_weights_dir = Path(
+            os.getenv(
+                "LLM_WEIGHTS_DIR",
+                str(Path(__file__).resolve().parents[3] / "LLM_Weights"),
+            )
+        )
+        if ckpt_dir is None:
+            ckpt_dir = os.getenv(
+                "BIOMEDCLIP_CKPT_DIR",
+                str(default_weights_dir / "BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"),
+            )
+
         self.device = torch.device(device) if device else (
             torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         )
@@ -189,8 +202,12 @@ class BiomedCLIPTextEmbedder:
         self.model.eval()
 
         # For chunk sizing / token counting (keep your local HF tokenizer path)
+        hf_tokenizer_path = os.getenv(
+            "BIOMEDBERT_TOKENIZER_PATH",
+            str(default_weights_dir / "BiomedNLP-BiomedBERT-base-uncased-abstract"),
+        )
         self.hf_tokenizer = AutoTokenizer.from_pretrained(
-            "/home/nishad/LLM_Weights/BiomedNLP-BiomedBERT-base-uncased-abstract"
+            hf_tokenizer_path
         )
 
         self.context_length = 256

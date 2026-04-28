@@ -25,7 +25,7 @@ from openai import OpenAI
 
 # If this import fails, run:
 #   export PYTHONPATH=$PWD/scripts:$PYTHONPATH
-from Document_version.scripts.utils.big_chungus import BiomedCLIPTextEmbedder
+from scripts.utils.big_chungus import BiomedCLIPTextEmbedder
 
 
 MRN_KEY = os.environ.get("MRN_KEY", "MRN")
@@ -237,7 +237,11 @@ def main():
         device=os.environ.get("EMBED_DEVICE", "cuda:0"),
         ckpt_dir=os.environ.get(
             "BIOMEDCLIP_CKPT_DIR",
-            "/home/nishad/LLM_Weights/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224",
+            str(
+                root.parent
+                / "LLM_Weights"
+                / "BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
+            ),
         ),
         model_name=os.environ.get("BIOMEDCLIP_MODEL_NAME", "biomedclip_local"),
     )
