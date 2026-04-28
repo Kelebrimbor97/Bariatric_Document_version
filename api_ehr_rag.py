@@ -1,18 +1,18 @@
 from pathlib import Path
 import sys
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import json
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from src.ehr_rag_service import answer_question
 from src.config import PROCESSED_DIR
 
 
-
-app = FastAPI(title="EHR RAG API", version="0.1.0")
+app = FastAPI(title="EHR RAG API", version="0.2.0")
 
 
 class AskRequest(BaseModel):
@@ -24,12 +24,23 @@ class SourceItem(BaseModel):
     relative_path: str | None = None
     page_num: int | None = None
     chunk_id: str | None = None
+    document_type: str | None = None
+    section_title: str | None = None
+    rerank_score: float | None = None
+
+
+class RetrievalPlanItem(BaseModel):
+    primary_query: str | None = None
+    subqueries: list[str] = Field(default_factory=list)
+    target_document_types: list[str] = Field(default_factory=list)
+    rationale: str | None = None
 
 
 class AskResponse(BaseModel):
     patient_id: str | None = None
     answer: str
-    sources: list[SourceItem] = []
+    sources: list[SourceItem] = Field(default_factory=list)
+    retrieval_plan: RetrievalPlanItem | dict[str, Any] | None = None
 
 
 @app.get("/health")
@@ -67,10 +78,12 @@ def ask(req: AskRequest):
             patient_id=req.patient_id,
             answer=result.get("answer", ""),
             sources=result.get("sources", []),
+            retrieval_plan=result.get("retrieval_plan"),
         )
 
     return AskResponse(
         patient_id=req.patient_id,
         answer=str(result),
         sources=[],
+        retrieval_plan=None,
     )
