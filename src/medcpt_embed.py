@@ -1,9 +1,12 @@
+import os
+
 import torch
 from transformers import AutoTokenizer, AutoModel
 
 class MedCPTEncoder:
     def __init__(self, model_name: str, device: str = None):
-        self.device = device or ("cuda:1" if torch.cuda.is_available() else "cpu")
+        default_device = os.getenv("EMBED_DEVICE")
+        self.device = device or default_device or ("cuda:0" if torch.cuda.is_available() else "cpu")
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,

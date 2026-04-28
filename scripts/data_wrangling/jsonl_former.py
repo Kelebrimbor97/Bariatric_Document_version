@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 import json
 from pypdf import PdfReader
 
@@ -42,12 +43,14 @@ def build_pdf_json_structure(root_folder: str) -> dict:
 
 
 if __name__ == "__main__":
-    root_folder = "/home/nishad/Bariatric/Data/MBS LLM/Test Patients/Test 4 - 101150422"
-    output_json = "/home/nishad/Bariatric/Data/MBS LLM/Test Patients/Test 4 - 101150422.json"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root-folder", required=True, help="Root folder containing PDFs")
+    parser.add_argument("--output-json", required=True, help="Output JSON file path")
+    args = parser.parse_args()
 
-    data = build_pdf_json_structure(root_folder)
+    data = build_pdf_json_structure(args.root_folder)
 
-    with open(output_json, "w", encoding="utf-8") as f:
+    with open(args.output_json, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-    print(f"Saved JSON to {output_json}")
+    print(f"Saved JSON to {args.output_json}")

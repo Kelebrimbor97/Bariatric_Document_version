@@ -1,4 +1,4 @@
-# Document_version EHR + Literature RAG Workflow
+# Bariatric_Document_version EHR + Literature RAG Workflow
 
 This repository runs a local clinical-document RAG stack with optional literature grounding in OpenWebUI.
 
@@ -21,13 +21,13 @@ The current workflow uses:
 Project root:
 
 ```bash
-/home/nishad/Bariatric/Document_version
+$PROJECT_DIR
 ```
 
 Model weights:
 
 ```bash
-/home/nishad/LLM_Weights
+$LLM_WEIGHTS_DIR
 ```
 
 OpenWebUI:
@@ -39,7 +39,7 @@ http://localhost:8080
 Expected project layout:
 
 ```text
-Document_version/
+Bariatric_Document_version/
 ├── docker-compose.yml
 ├── start_services.sh
 ├── run_build.sh
@@ -84,7 +84,7 @@ Document_version/
 From a terminal:
 
 ```bash
-cd /home/nishad/Bariatric/Document_version
+cd $PROJECT_DIR
 ./start_services.sh
 ```
 
@@ -109,7 +109,7 @@ Docker Compose is responsible for the persistent infrastructure services.
 Start manually:
 
 ```bash
-cd /home/nishad/Bariatric/Document_version
+cd $PROJECT_DIR
 docker compose up -d qdrant vllm_qwen
 ```
 
@@ -188,7 +188,7 @@ Use `run_build.sh` only when you need to rebuild the EHR corpus or regenerate ve
 Run:
 
 ```bash
-cd /home/nishad/Bariatric/Document_version
+cd $PROJECT_DIR
 ./run_build.sh
 ```
 
@@ -360,7 +360,7 @@ The prompt should instruct the model to:
 ## 13. Typical daily workflow
 
 ```bash
-cd /home/nishad/Bariatric/Document_version
+cd $PROJECT_DIR
 ./start_services.sh
 ```
 
@@ -426,7 +426,7 @@ pkill -f "uvicorn api_literature_rag:app" || true
 Stop Docker services:
 
 ```bash
-cd /home/nishad/Bariatric/Document_version
+cd $PROJECT_DIR
 docker compose down
 ```
 
