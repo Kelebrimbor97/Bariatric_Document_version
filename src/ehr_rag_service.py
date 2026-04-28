@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 
 import torch
@@ -20,7 +21,8 @@ from src.encoder_client import embed_query_texts
 
 class MedCPTReranker:
     def __init__(self, model_name: str, device: str = None):
-        self.device = device or ("cuda:1" if torch.cuda.is_available() else "cpu")
+        default_device = os.getenv("RERANK_DEVICE")
+        self.device = device or default_device or ("cuda:0" if torch.cuda.is_available() else "cpu")
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             local_files_only=True,
@@ -58,13 +60,13 @@ class MedCPTReranker:
 @lru_cache(maxsize=1)
 def get_query_encoder():
     print("[INIT] Loading MedCPT query encoder once...")
-    return MedCPTEncoder(MEDCPT_QUERY_MODEL, device="cuda:1")
+    return MedCPTEncoder(MEDCPT_QUERY_MODEL, device=os.getenv("QUERY_EMBED_DEVICE"))
 
 
 @lru_cache(maxsize=1)
 def get_reranker():
     print("[INIT] Loading MedCPT reranker once...")
-    return MedCPTReranker(MEDCPT_RERANK_MODEL, device="cuda:1")
+    return MedCPTReranker(MEDCPT_RERANK_MODEL, device=os.getenv("RERANK_DEVICE"))
 
 
 @lru_cache(maxsize=1)

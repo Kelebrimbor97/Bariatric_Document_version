@@ -35,7 +35,7 @@ from chromadb.config import Settings
 # If you run from elsewhere and this import fails, run:
 #   export PYTHONPATH=$PWD/scripts:$PYTHONPATH
 #
-from Document_version.scripts.utils.big_chungus import (
+from scripts.utils.big_chungus import (
     BiomedCLIPTextEmbedder,
     ChunkConfig,
     chunk_text_for_context_length,
@@ -107,6 +107,7 @@ def resolve_columns(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    project_root = Path(__file__).resolve().parent.parent
 
     # IO
     ap.add_argument("--csv", type=Path, default=Path("./Data/MBS_clinical_notes.csv"))
@@ -130,7 +131,7 @@ def main() -> None:
     ap.add_argument(
         "--ckpt_dir",
         type=Path,
-        default=Path("/home/nishad/LLM_Weights/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"),
+        default=project_root.parent / "LLM_Weights" / "BiomedCLIP-PubMedBERT_256-vit_base_patch16_224",
     )
     ap.add_argument("--model_name", type=str, default="biomedclip_local")
 

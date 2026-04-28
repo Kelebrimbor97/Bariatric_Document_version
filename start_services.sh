@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="/home/nishad/Bariatric/Document_version"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONDA_SH="$HOME/anaconda3/etc/profile.d/conda.sh"
 CONDA_ENV="ehr_rag"
+QDRANT_URL="${QDRANT_URL:-http://localhost:6333}"
+VLLM_BASE_URL="${VLLM_BASE_URL:-http://localhost:8000/v1}"
+VLLM_MODEL_NAME="${VLLM_MODEL_NAME:-qwen-ehr}"
+ENCODER_API_URL="${ENCODER_API_URL:-http://localhost:8092}"
 
 cd "$PROJECT_DIR"
 mkdir -p logs
@@ -23,11 +27,11 @@ echo "=== Starting Docker services: Qdrant + vLLM ==="
 docker compose up -d qdrant vllm_qwen
 
 echo "=== Checking Qdrant ==="
-curl -fsS http://localhost:6333 >/dev/null
+curl -fsS "$QDRANT_URL" >/dev/null
 echo "Qdrant OK"
 
 echo "=== Checking vLLM ==="
-curl -fsS http://localhost:8000/v1/models >/dev/null
+curl -fsS "${VLLM_BASE_URL%/}/models" >/dev/null
 echo "vLLM OK"
 
 echo "=== Stopping old API services if present ==="
@@ -41,7 +45,7 @@ nohup env PYTHONPATH=. uvicorn api_encoder:app --host 0.0.0.0 --port 8092 --work
   > logs/api_encoder.log 2>&1 &
 
 sleep 8
-if curl -fsS http://localhost:8092/health >/dev/null; then
+if curl -fsS "${ENCODER_API_URL%/}/health" >/dev/null; then
   echo "Encoder API OK"
 else
   echo "Encoder API FAILED. Last logs:"
@@ -52,10 +56,10 @@ fi
 echo "=== Starting EHR RAG API on 8090 ==="
 nohup env \
   PYTHONPATH=. \
-  VLLM_BASE_URL=http://localhost:8000/v1 \
-  VLLM_MODEL_NAME=qwen-ehr \
-  QDRANT_URL=http://localhost:6333 \
-  ENCODER_API_URL=http://localhost:8092 \
+  VLLM_BASE_URL="$VLLM_BASE_URL" \
+  VLLM_MODEL_NAME="$VLLM_MODEL_NAME" \
+  QDRANT_URL="$QDRANT_URL" \
+  ENCODER_API_URL="$ENCODER_API_URL" \
   uvicorn api_ehr_rag:app --host 0.0.0.0 --port 8090 --workers 1 \
   > logs/api_ehr_rag.log 2>&1 &
 
@@ -71,9 +75,9 @@ fi
 echo "=== Starting Literature Approval RAG API on 8093 ==="
 nohup env \
   PYTHONPATH=. \
-  VLLM_BASE_URL=http://localhost:8000/v1 \
-  VLLM_MODEL_NAME=qwen-ehr \
-  ENCODER_API_URL=http://localhost:8092 \
+  VLLM_BASE_URL="$VLLM_BASE_URL" \
+  VLLM_MODEL_NAME="$VLLM_MODEL_NAME" \
+  ENCODER_API_URL="$ENCODER_API_URL" \
   uvicorn api_literature_rag:app --host 0.0.0.0 --port 8093 --workers 1 \
   > logs/api_literature_rag.log 2>&1 &
 

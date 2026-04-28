@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -53,7 +54,10 @@ def main():
         print("No records found in chunks.jsonl")
         return
 
-    encoder = MedCPTEncoder(MEDCPT_ARTICLE_MODEL, device="cuda:1")
+    encoder = MedCPTEncoder(
+        MEDCPT_ARTICLE_MODEL,
+        device=os.getenv("ARTICLE_EMBED_DEVICE", os.getenv("EMBED_DEVICE")),
+    )
     client = get_client(QDRANT_URL)
 
     sample_vec = encoder.encode(["test embedding"])

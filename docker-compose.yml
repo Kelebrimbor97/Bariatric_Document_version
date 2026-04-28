@@ -18,7 +18,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - /home/nishad/LLM_Weights:/llm_weights
+      - ${LLM_WEIGHTS_DIR:-./LLM_Weights}:/llm_weights
     gpus: all
     command: >
       --model /llm_weights/Qwen3.6-35B-A3B

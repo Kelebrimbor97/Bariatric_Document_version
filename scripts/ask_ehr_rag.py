@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -23,7 +24,8 @@ from src.medcpt_embed import MedCPTEncoder
 
 class MedCPTReranker:
     def __init__(self, model_name: str, device: str = None):
-        self.device = device or ("cuda:1" if torch.cuda.is_available() else "cpu")
+        default_device = os.getenv("RERANK_DEVICE")
+        self.device = device or default_device or ("cuda:0" if torch.cuda.is_available() else "cpu")
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             local_files_only=True,
@@ -62,8 +64,11 @@ def main():
     patient_id = input("Patient ID: ").strip()
     question = input("Question: ").strip()
 
-    query_encoder = MedCPTEncoder(MEDCPT_QUERY_MODEL, device="cuda:1")
-    reranker = MedCPTReranker(MEDCPT_RERANK_MODEL, device="cuda:1")
+    query_encoder = MedCPTEncoder(
+        MEDCPT_QUERY_MODEL,
+        device=os.getenv("QUERY_EMBED_DEVICE", os.getenv("EMBED_DEVICE")),
+    )
+    reranker = MedCPTReranker(MEDCPT_RERANK_MODEL, device=os.getenv("RERANK_DEVICE"))
 
     qvec = query_encoder.encode([question])[0]
     client = QdrantClient(url=QDRANT_URL)
