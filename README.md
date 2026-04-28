@@ -35,7 +35,7 @@ $LLM_WEIGHTS_DIR
 The repository now treats model weights as an environment-driven root folder:
 
 - `LLM_WEIGHTS_DIR` is the **single base path** for local model assets.
-- If unset, code defaults to: `../LLM_Weights` relative to repo root (for this repo: `.../Bariatric_Document_version/../LLM_Weights`).
+- If unset, code defaults to: `$HOME/LLM_Weights`.
 - Component-specific model paths are derived from this base unless explicitly overridden:
   - `MEDCPT_QUERY_MODEL` -> `$LLM_WEIGHTS_DIR/MedCPT-Query-Encoder`
   - `MEDCPT_ARTICLE_MODEL` -> `$LLM_WEIGHTS_DIR/MedCPT-Article-Encoder`
@@ -48,10 +48,10 @@ The repository now treats model weights as an environment-driven root folder:
 
 Containerized vLLM mount behavior:
 
-- `docker-compose.yml` mounts `${LLM_WEIGHTS_DIR:-./LLM_Weights}` into `/llm_weights` inside the container.
+- `docker-compose.yml` mounts `${LLM_WEIGHTS_DIR:-$HOME/LLM_Weights}` into `/llm_weights` inside the container.
 - That means:
   - if `LLM_WEIGHTS_DIR` is exported, Docker uses it;
-  - otherwise Docker expects `./LLM_Weights` under the repository root.
+  - otherwise Docker uses `$HOME/LLM_Weights`.
 
 OpenWebUI:
 

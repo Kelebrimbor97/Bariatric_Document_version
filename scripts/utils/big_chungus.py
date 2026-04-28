@@ -153,7 +153,7 @@ class BiomedCLIPTextEmbedder:
         default_weights_dir = Path(
             os.getenv(
                 "LLM_WEIGHTS_DIR",
-                str(Path(__file__).resolve().parents[3] / "LLM_Weights"),
+                str(Path.home() / "LLM_Weights"),
             )
         )
         if ckpt_dir is None:

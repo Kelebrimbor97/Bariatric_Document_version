@@ -136,7 +136,7 @@ def main() -> None:
             os.getenv(
                 "BIOMEDCLIP_CKPT_DIR",
                 str(
-                    project_root.parent
+                    Path.home()
                     / "LLM_Weights"
                     / "BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
                 ),
