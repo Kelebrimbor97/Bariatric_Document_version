@@ -21,7 +21,7 @@ PATIENTS_ROOT = Path(
 )
 
 LLM_WEIGHTS_DIR = Path(
-    os.getenv("LLM_WEIGHTS_DIR", str(PROJECT_ROOT.parent / "LLM_Weights"))
+    os.getenv("LLM_WEIGHTS_DIR", str(Path.home() / "LLM_Weights"))
 )
 MEDCPT_QUERY_MODEL = os.getenv(
     "MEDCPT_QUERY_MODEL",
