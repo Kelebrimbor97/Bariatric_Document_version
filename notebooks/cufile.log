@@ -1,0 +1,9 @@
+ 13-01-2026 16:10:11:778 [pid=404535 tid=404535] ERROR  cufio-cuda:644 cuCtxCreate failed for GPU: 0
+ 13-01-2026 16:10:11:778 [pid=404535 tid=404535] NOTICE  cufio-drv:830 running in compatible mode
+ 13-01-2026 16:10:12:539 [pid=404535 tid=405673] ERROR  cufio_core:55 Threadpool Thread ID:  134004633036352 cuDevicePrimaryCtxRetain failed with error 2
+ 13-01-2026 16:11:47:622 [pid=406940 tid=406940] NOTICE  cufio-drv:830 running in compatible mode
+ 13-01-2026 16:11:48:170 [pid=406940 tid=406940] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/nvme0n1p6
+ 15-04-2026 13:09:38:687 [pid=243719 tid=243719] NOTICE  cufio-drv:830 running in compatible mode
+ 15-04-2026 13:09:39:362 [pid=243719 tid=243719] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/nvme0n1p6
+ 15-04-2026 18:46:43:842 [pid=473489 tid=473489] NOTICE  cufio-drv:830 running in compatible mode
+ 15-04-2026 18:46:44:385 [pid=473489 tid=473489] ERROR  cufio-fs:79 mount option not found in mount table data device: /dev/nvme0n1p6

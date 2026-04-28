@@ -1,0 +1,13 @@
+pypdf
+pymupdf
+qdrant-client
+transformers
+torch
+numpy
+pandas
+tqdm
+openai
+rank-bm25
+python-dateutil
+orjson
+requests

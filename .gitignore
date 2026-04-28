@@ -1,0 +1,12 @@
+# Directories
+data/
+Data/
+
+# logs
+logs/
+*.logs
+
+# Random unrelated
+speech/
+tts_proxy.py
+*pycache*
