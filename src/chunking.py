@@ -1,7 +1,7 @@
 import re
 
 SECTION_HEADER_RE = re.compile(
-    r"^(?:[A-Z][A-Z0-9 /&()\-]{2,}:|[A-Z][A-Za-z0-9 /&()\-]{2,}:)\s*$"
+    r"^[A-Z][A-Z0-9 /&()\-]{2,}:?\s*$"
 )
 
 COMMON_SECTION_HEADERS = {
@@ -54,11 +54,14 @@ def looks_like_section_header(line: str) -> bool:
     if normalized in COMMON_SECTION_HEADERS:
         return True
 
-    if SECTION_HEADER_RE.match(cleaned):
+    # Accept short ALL-CAPS headings such as FINDINGS or DISCHARGE MEDICATIONS.
+    # Do not accept arbitrary Title Case sentences as section headers.
+    if SECTION_HEADER_RE.match(cleaned) and cleaned.upper() == cleaned:
         return True
 
-    # Numbered headings such as "1. Hospital Course".
-    if re.match(r"^\d+(?:\.\d+)*[.)]?\s+[A-Za-z][A-Za-z0-9 /&()\-]{2,}:?$", cleaned):
+    # Numbered headings must have an explicit separator, e.g. "1. Hospital Course".
+    # This avoids false headers like "1000 mL Initial Volume".
+    if re.match(r"^\d+(?:\.\d+)*[.)]\s+[A-Za-z][A-Za-z0-9 /&()\-]{2,}:?$", cleaned):
         return True
 
     return False
