@@ -17,8 +17,17 @@ DEFAULT_QUESTIONS = [
 ]
 
 
-def post_question(base_url: str, question: str, patient_id: str | None = None, timeout: int = 600) -> dict[str, Any]:
-    payload: dict[str, Any] = {"question": question}
+def post_question(
+    base_url: str,
+    question: str,
+    patient_id: str | None = None,
+    structured: bool = False,
+    timeout: int = 600,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "question": question,
+        "structured": structured,
+    }
     if patient_id:
         payload["patient_id"] = patient_id
 
@@ -39,6 +48,13 @@ def print_result(result: dict[str, Any], show_answer: bool = True) -> None:
         print(result.get("answer", ""))
     else:
         print("<answer hidden; use --show-answer to print it>")
+
+    structured_answer = result.get("structured_answer")
+    if structured_answer is not None:
+        print("\n" + "=" * 88)
+        print("STRUCTURED ANSWER")
+        print("=" * 88)
+        print(json.dumps(structured_answer, indent=2, ensure_ascii=False))
 
     print("\n" + "=" * 88)
     print("RETRIEVAL PLAN")
@@ -97,6 +113,7 @@ def main() -> int:
     )
     parser.add_argument("--out", default=None, help="Optional JSONL output path")
     parser.add_argument("--show-answer", action="store_true", help="Print full answer text")
+    parser.add_argument("--structured", action="store_true", help="Request structured JSON answer mode")
     args = parser.parse_args()
 
     questions = load_questions(args)
@@ -117,10 +134,16 @@ def main() -> int:
             print("#" * 88)
             print(question)
 
-            result = post_question(args.base_url, question, patient_id=args.patient_id)
+            result = post_question(
+                args.base_url,
+                question,
+                patient_id=args.patient_id,
+                structured=args.structured,
+            )
             result_record = {
                 "patient_id": args.patient_id,
                 "question": question,
+                "structured": args.structured,
                 "result": result,
             }
 
