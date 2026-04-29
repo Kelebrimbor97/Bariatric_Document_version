@@ -918,8 +918,6 @@ To stop only local APIs:
 
 Important: pass `COLLECTION_NAME=ehr_chunks_test_v3` explicitly when testing against the clean validation collection.
 
-At one point, bad section headers persisted even after code changes. Cause was likely stale `chunks.jsonl` and checkpoint reuse.
-
 
 ---
 
@@ -944,7 +942,9 @@ Important design preference:
 
 Do not spend too much time on perfect section detection or overly strict structured-answer semantics right now.
 
+
 ---
+
 
 ## 10. Recommended next step
 
