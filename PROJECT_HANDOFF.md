@@ -391,6 +391,7 @@ build retrieval plan
 → annotate retrieval_source as dense | keyword | both
 → rerank all candidates with MedCPT cross-encoder
 → send top evidence to LLM
+```
 
 Important: broad fallback remains so older indexes or missed document types still work.
 
@@ -782,6 +783,62 @@ Standalone keyword retrieval tested successfully:
 hits=8 for all default queries
 ```
 
+### Hybrid dense + BM25 `/ask` validation
+
+BM25 keyword retrieval is now wired into the main `/ask` path.
+
+Current flow:
+
+```text
+retrieval planner
+→ dense planned retrieval
+→ BM25 retrieval using planner primary query + subqueries
+→ deduplicate by chunk_id
+→ broad dense fallback
+→ MedCPT rerank
+→ answer / structured answer
+```
+
+The `/ask` source metadata now includes:
+
+```text
+retrieval_source: dense | keyword | both
+```
+
+Latest structured smoke test:
+
+```text
+records: 6
+passed: 6
+failed: 0
+
+finding status counts:
+found: 13
+not_found: 7
+
+retrieval_source counts:
+both: 25
+dense: 22
+keyword: 1
+missing: 0
+
+source document_type counts:
+nutrition_note: 20
+operative_report: 16
+clinic_note: 6
+unknown: 5
+radiology: 1
+```
+
+Interpretation:
+
+```text
+BM25 is not overwhelming dense retrieval.
+Most final chunks are either dense-only or dense+keyword.
+One keyword-only chunk survived reranking, suggesting BM25 adds some recall.
+The API response model correctly exposes retrieval_source.
+```
+
 ---
 
 ## 8. Lessons learned / debugging notes
@@ -826,6 +883,14 @@ curl -s http://localhost:6333/collections/ehr_chunks_test | python -m json.tool
 ```
 
 ### Stale chunks.jsonl problem
+
+At one point, bad section headers persisted even after code changes. Cause was likely stale `chunks.jsonl` and checkpoint reuse.
+
+Fix:
+
+```text
+Back up documents.jsonl/chunks.jsonl and checkpoints, then rebuild fresh.
+```
 
 ### Restarting local APIs after code changes
 
@@ -905,6 +970,10 @@ Current recommendation:
 Do not tune BM25 yet.
 Keep the conservative hybrid retrieval as the stable baseline.
 ```
+
+---
+
+
 ## 11. Do not forget
 
 ### Current branch
