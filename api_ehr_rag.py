@@ -28,6 +28,7 @@ class SourceItem(BaseModel):
     document_type: str | None = None
     section_title: str | None = None
     rerank_score: float | None = None
+    retrieval_source: str | None = None
 
 
 class RetrievalPlanItem(BaseModel):
