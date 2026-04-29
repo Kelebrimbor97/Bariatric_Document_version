@@ -18,6 +18,7 @@ from src.config import (
 from src.medcpt_embed import MedCPTEncoder
 from src.encoder_client import embed_query_texts
 from src.retrieval_planner import build_retrieval_plan
+from src.structured_answering import build_structured_answer_prompt, extract_json_object
 
 
 class MedCPTReranker:
@@ -181,7 +182,7 @@ def collect_planned_hits(client: QdrantClient, patient_id: str | None, question:
     return list(hits_by_chunk_id.values()), plan
 
 
-def answer_question(patient_id: str | None, question: str):
+def answer_question(patient_id: str | None, question: str, structured: bool = False):
     reranker = get_reranker()
     client = get_qdrant_client()
     llm = get_llm_client()
@@ -192,6 +193,7 @@ def answer_question(patient_id: str | None, question: str):
         scope = f"patient identifier: {patient_id}" if patient_id else "the full corpus"
         return {
             "answer": f"No matching chunks found for {scope}.",
+            "structured_answer": None,
             "sources": [],
             "retrieval_plan": plan.to_dict(),
         }
@@ -231,6 +233,28 @@ def answer_question(patient_id: str | None, question: str):
             }
         )
 
+    plan_dict = plan.to_dict()
+
+    if structured:
+        prompt = build_structured_answer_prompt(
+            question=question,
+            evidence_blocks=evidence_blocks,
+            retrieval_plan=plan_dict,
+        )
+        resp = llm.chat.completions.create(
+            model=VLLM_MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+        )
+        raw_answer = resp.choices[0].message.content or ""
+        structured_answer = extract_json_object(raw_answer)
+        return {
+            "answer": structured_answer.get("concise_answer", raw_answer) if structured_answer else raw_answer,
+            "structured_answer": structured_answer,
+            "sources": sources,
+            "retrieval_plan": plan_dict,
+        }
+
     prompt = f"""
 You are answering questions about one patient or one local EHR corpus.
 
@@ -242,7 +266,7 @@ Rules:
 - If relevant evidence is absent, explicitly say it was not found in the retrieved evidence.
 
 Retrieval plan:
-{plan.to_dict()}
+{plan_dict}
 
 Question:
 {question}
@@ -259,6 +283,7 @@ Evidence:
 
     return {
         "answer": resp.choices[0].message.content,
+        "structured_answer": None,
         "sources": sources,
-        "retrieval_plan": plan.to_dict(),
+        "retrieval_plan": plan_dict,
     }
