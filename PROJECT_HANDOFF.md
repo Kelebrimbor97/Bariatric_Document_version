@@ -1,6 +1,6 @@
 # Bariatric Document RAG Project — Handoff Notes
 
-_Last updated in chat: 2026-04-29_
+_Last updated in chat: 2026-04-29 — BM25 hybrid `/ask` retrieval validated_
 
 This file is intended to be pasted or uploaded into a new ChatGPT chat so the next chat can continue without needing the oversized previous thread.
 
@@ -385,11 +385,12 @@ Retrieval now does:
 ```text
 build retrieval plan
 → run targeted dense searches by subquery × document_type
-→ run broad fallback searches
+→ run BM25 keyword searches using planner primary query + subqueries
 → deduplicate by chunk_id
+→ run broad dense fallback searches
+→ annotate retrieval_source as dense | keyword | both
 → rerank all candidates with MedCPT cross-encoder
 → send top evidence to LLM
-```
 
 Important: broad fallback remains so older indexes or missed document types still work.
 
@@ -402,6 +403,7 @@ chunk_id
 document_type
 section_title
 rerank_score
+retrieval_source
 ```
 
 ---
@@ -421,6 +423,11 @@ answer
 sources
 retrieval_plan
 structured_answer
+```
+Each source now includes retrieval diagnostics including:
+
+```
+retrieval_source: dense | keyword | both
 ```
 
 `structured_answer` is only populated if `structured=true`.
@@ -595,9 +602,10 @@ sleeve
 Important clarification:
 
 - The BM25 module itself is query-driven.
-- The test script has hardcoded smoke-test queries.
-- Main retrieval planner has conditional subquery expansion.
-- BM25 is **not yet wired into `/ask`**.
+- The standalone test script has hardcoded smoke-test queries.
+- Main retrieval uses planner primary query + subqueries for BM25.
+- BM25 is now wired into `/ask` conservatively.
+- BM25 candidates are deduplicated by `chunk_id` with dense candidates before MedCPT reranking.
 
 ---
 
@@ -819,6 +827,32 @@ curl -s http://localhost:6333/collections/ehr_chunks_test | python -m json.tool
 
 ### Stale chunks.jsonl problem
 
+### Restarting local APIs after code changes
+
+For normal code changes, use:
+
+```bash
+COLLECTION_NAME=ehr_chunks_test_v3 ./restart_services.sh
+```
+
+This restarts local FastAPI/uvicorn services only:
+
+```text
+api_encoder:app
+api_ehr_rag:app
+api_literature_rag:app
+```
+
+It intentionally does not touch Docker services such as Qdrant, vLLM/Qwen, or OpenWebUI.
+
+To stop only local APIs:
+
+```bash
+./stop_services.sh
+```
+
+Important: pass `COLLECTION_NAME=ehr_chunks_test_v3` explicitly when testing against the clean validation collection.
+
 At one point, bad section headers persisted even after code changes. Cause was likely stale `chunks.jsonl` and checkpoint reuse.
 
 Fix:
@@ -853,33 +887,24 @@ Do not spend too much time on perfect section detection or overly strict structu
 
 ## 10. Recommended next step
 
-The next logical implementation step is to wire BM25 keyword retrieval into the main EHR retrieval path.
+The BM25 hybrid retrieval wiring is now validated.
 
-Current desired flow:
+The next logical implementation step is to preserve this known-good state and then decide whether to tune retrieval behavior.
+
+Possible next tasks:
+
+1. Inspect the single `keyword`-only source from the latest smoke test and confirm it is clinically reasonable.
+2. Add a small smoke-test summary helper for `retrieval_source` counts if repeated manual counting becomes annoying.
+3. Leave retrieval tuning alone unless keyword-only hits look noisy.
+4. Consider updating OpenWebUI prompts/tool instructions to surface retrieval diagnostics only when debugging.
+5. Later, move toward public/synthetic testbed data before relying on private bariatric data.
+
+Current recommendation:
 
 ```text
-retrieval planner
-→ dense planned retrieval
-→ BM25 keyword retrieval using planner subqueries
-→ deduplicate by chunk_id
-→ rerank combined candidates with MedCPT cross-encoder
-→ answer / structured answer
+Do not tune BM25 yet.
+Keep the conservative hybrid retrieval as the stable baseline.
 ```
-
-Conservative integration plan:
-
-1. Modify `src/ehr_rag_service.py`.
-2. Import `get_keyword_retriever`.
-3. In `collect_planned_hits(...)`, after dense planned retrieval and before/after broad fallback, run keyword retrieval over the same planner subqueries.
-4. Convert BM25 records into a small hit-like object compatible with existing reranking pipeline, or adapt the code to operate on payload dicts instead of Qdrant hit objects.
-5. Deduplicate by `chunk_id`.
-6. Preserve dense broad fallback.
-7. Add source metadata field later like `retrieval_source: dense | keyword | both` if useful.
-
-Start with standalone wiring and test with the existing smoke tests.
-
----
-
 ## 11. Do not forget
 
 ### Current branch
@@ -952,12 +977,13 @@ Validated:
 - clean metadata collection worked
 - section false positives were reduced
 - structured=true returned parseable JSON
-- checker flags not_found+evidence but we tabled this because notes are messy
 - standalone BM25 keyword retrieval returned hits=8 for default queries
+- BM25 is now wired into `/ask` conservatively
+- latest hybrid structured smoke test passed 6/6
+- retrieval_source counts were both=25, dense=22, keyword=1, missing=0
 
 Next planned task:
-wire BM25 keyword retrieval into the main /ask retrieval path conservatively:
-dense planned retrieval + BM25 candidates + deduplicate + MedCPT rerank.
+preserve the known-good hybrid retrieval state, inspect the keyword-only source, and avoid retrieval tuning unless the keyword-only hit looks noisy.
 ```
 
 ---
@@ -989,8 +1015,8 @@ start_services.sh
 
 ## 14. Current open questions
 
-1. How aggressively should BM25 be integrated into main retrieval?
-2. Should we add `retrieval_source` metadata: `dense`, `keyword`, or `both`?
+1. Should BM25 retrieval be tuned further, or left conservative for now?
+2. Is the single keyword-only source from the latest smoke test clinically useful?
 3. Should structured answer validation be relaxed rather than normalized?
 4. When should public/synthetic datasets be added?
 5. Should we build a curated bariatric guideline/literature index locally?
@@ -1000,18 +1026,48 @@ start_services.sh
 
 ## 15. Recommended immediate next action
 
-Continue from:
+Inspect the keyword-only source from the latest hybrid smoke test.
 
-```text
-Wire BM25 keyword retrieval into collect_planned_hits(...) in src/ehr_rag_service.py.
-```
-
-Keep it conservative and test with:
+Useful command:
 
 ```bash
-COLLECTION_NAME=ehr_chunks_test_v3 ./start_services.sh
+python - <<'PY'
+import json
 
-python scripts/test_ehr_retrieval_api.py   --patient-id 021494762   --questions-file eval/ehr_retrieval_smoke_questions.jsonl   --out Data/processed/ehr_retrieval_hybrid_smoke_results.jsonl   --structured   --show-answer
+path = "Data/processed/ehr_retrieval_hybrid_sources_smoke_results.jsonl"
+
+def find_sources(obj):
+    if isinstance(obj, dict):
+        if isinstance(obj.get("sources"), list):
+            return obj["sources"]
+        for v in obj.values():
+            found = find_sources(v)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = find_sources(item)
+            if found is not None:
+                return found
+    return None
+
+with open(path) as f:
+    for idx, line in enumerate(f, start=1):
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        for rank, s in enumerate(find_sources(r) or [], start=1):
+            if s.get("retrieval_source") == "keyword":
+                print("=" * 100)
+                print(f"record: {idx}")
+                print(f"source rank: {rank}")
+                print("document_type:", s.get("document_type"))
+                print("section_title:", s.get("section_title"))
+                print("rerank_score:", s.get("rerank_score"))
+                print("relative_path:", s.get("relative_path"))
+                print("page_num:", s.get("page_num"))
+                print("chunk_id:", s.get("chunk_id"))
+PY
 ```
 
-Then compare source document types and answers against the prior dense-only structured smoke results.
+If the keyword-only source looks reasonable, consider the BM25 `/ask` integration validated and stable.
