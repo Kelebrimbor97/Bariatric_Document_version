@@ -7,7 +7,7 @@ QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MODEL_NAME = os.getenv("VLLM_MODEL_NAME", "qwen-ehr")
 
-COLLECTION_NAME = "ehr_chunks"
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "ehr_chunks")
 
 PROCESSED_DIR = PROJECT_ROOT / "Data" / "processed"
 QDRANT_STORAGE_DIR = PROJECT_ROOT / "Data" / "qdrant_storage"
