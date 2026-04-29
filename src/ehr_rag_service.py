@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from types import SimpleNamespace
 
 import torch
 from openai import OpenAI
@@ -17,6 +18,7 @@ from src.config import (
 )
 from src.medcpt_embed import MedCPTEncoder
 from src.encoder_client import embed_query_texts
+from src.keyword_retrieval import get_keyword_retriever
 from src.retrieval_planner import build_retrieval_plan
 from src.structured_answering import build_structured_answer_prompt, extract_json_object
 
@@ -163,6 +165,31 @@ def collect_planned_hits(client: QdrantClient, patient_id: str | None, question:
                 chunk_id = hit.payload.get("chunk_id")
                 if chunk_id and chunk_id not in hits_by_chunk_id:
                     hits_by_chunk_id[chunk_id] = hit
+
+    # Keyword/BM25 retrieval improves recall for exact clinical terms that dense
+    # retrieval may miss, e.g. B12, ferritin, PTH, RYGB, thiamine.
+    # Keep this conservative: use the same planner subqueries and target document
+    # types, then let the MedCPT reranker decide what survives.
+    try:
+        keyword_retriever = get_keyword_retriever()
+        keyword_queries = list(dict.fromkeys([plan.primary_query, *plan.subqueries]))
+
+        for subquery in keyword_queries:
+            keyword_hits = keyword_retriever.search(
+                query=subquery,
+                patient_id=patient_id,
+                document_types=plan.target_document_types,
+                limit=limit_per_query,
+            )
+
+            for keyword_hit in keyword_hits:
+                payload = dict(keyword_hit.record)
+                chunk_id = payload.get("chunk_id")
+                if chunk_id and chunk_id not in hits_by_chunk_id:
+                    hits_by_chunk_id[chunk_id] = SimpleNamespace(payload=payload)
+
+    except Exception as exc:
+        print(f"[WARN] Keyword retrieval skipped: {exc}")
 
     # Broad fallback is important for pre-existing indexes that do not yet have
     # document_type payloads, and for questions not covered by deterministic rules.
