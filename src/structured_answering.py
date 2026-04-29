@@ -42,8 +42,10 @@ Rules:
 - Cite evidence using bracket numbers from the evidence blocks, e.g. [1], [2].
 - For each finding, set status to exactly one of: found, not_found, uncertain, inferred_from_evidence.
 - Use found only when the value is explicitly supported by evidence.
+- If status is found or inferred_from_evidence, evidence MUST include at least one valid bracket number.
 - Use inferred_from_evidence only for cautious inferences directly supported by evidence.
 - Use not_found when relevant information is absent from the retrieved evidence.
+- If status is not_found, evidence MUST be [] even if retrieved evidence was reviewed to determine absence.
 - Use uncertain when evidence is conflicting, vague, or incomplete.
 - Do not invent diagnoses, procedures, dates, medications, labs, recommendations, or source details.
 - If a requested item is missing, put it in missing_information.
