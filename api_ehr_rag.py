@@ -12,12 +12,13 @@ from src.ehr_rag_service import answer_question
 from src.config import PROCESSED_DIR
 
 
-app = FastAPI(title="EHR RAG API", version="0.2.0")
+app = FastAPI(title="EHR RAG API", version="0.3.0")
 
 
 class AskRequest(BaseModel):
     patient_id: str | None = None
     question: str
+    structured: bool = False
 
 
 class SourceItem(BaseModel):
@@ -39,6 +40,7 @@ class RetrievalPlanItem(BaseModel):
 class AskResponse(BaseModel):
     patient_id: str | None = None
     answer: str
+    structured_answer: dict[str, Any] | None = None
     sources: list[SourceItem] = Field(default_factory=list)
     retrieval_plan: RetrievalPlanItem | dict[str, Any] | None = None
 
@@ -71,12 +73,13 @@ def list_patients():
 
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest):
-    result = answer_question(req.patient_id, req.question)
+    result = answer_question(req.patient_id, req.question, structured=req.structured)
 
     if isinstance(result, dict):
         return AskResponse(
             patient_id=req.patient_id,
             answer=result.get("answer", ""),
+            structured_answer=result.get("structured_answer"),
             sources=result.get("sources", []),
             retrieval_plan=result.get("retrieval_plan"),
         )
@@ -84,6 +87,7 @@ def ask(req: AskRequest):
     return AskResponse(
         patient_id=req.patient_id,
         answer=str(result),
+        structured_answer=None,
         sources=[],
         retrieval_plan=None,
     )
