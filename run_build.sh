@@ -11,6 +11,9 @@ conda activate ehr_rag
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
 
+export COLLECTION_NAME="${COLLECTION_NAME:-ehr_chunks_test}"
+echo "Qdrant collection: $COLLECTION_NAME"
+
 mkdir -p logs
 
 echo "=== BUILD START $(date) ==="
