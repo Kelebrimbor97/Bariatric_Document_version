@@ -146,6 +146,15 @@ def collect_planned_hits(client: QdrantClient, patient_id: str | None, question:
     """Run CLI-RAG-style planned retrieval, with broad fallback for older indexes."""
     plan = build_retrieval_plan(question)
     hits_by_chunk_id = {}
+    retrieval_sources_by_chunk_id = {}
+
+    def add_hit(hit, source: str):
+        chunk_id = hit.payload.get("chunk_id")
+        if not chunk_id:
+            return
+        if chunk_id not in hits_by_chunk_id:
+            hits_by_chunk_id[chunk_id] = hit
+        retrieval_sources_by_chunk_id.setdefault(chunk_id, set()).add(source)
 
     # Targeted global/local-ish search: subquery x document_type.
     for subquery in plan.subqueries:
@@ -162,9 +171,7 @@ def collect_planned_hits(client: QdrantClient, patient_id: str | None, question:
                 hits = []
 
             for hit in hits:
-                chunk_id = hit.payload.get("chunk_id")
-                if chunk_id and chunk_id not in hits_by_chunk_id:
-                    hits_by_chunk_id[chunk_id] = hit
+                add_hit(hit, "dense")
 
     # Keyword/BM25 retrieval improves recall for exact clinical terms that dense
     # retrieval may miss, e.g. B12, ferritin, PTH, RYGB, thiamine.
@@ -184,9 +191,7 @@ def collect_planned_hits(client: QdrantClient, patient_id: str | None, question:
 
             for keyword_hit in keyword_hits:
                 payload = dict(keyword_hit.record)
-                chunk_id = payload.get("chunk_id")
-                if chunk_id and chunk_id not in hits_by_chunk_id:
-                    hits_by_chunk_id[chunk_id] = SimpleNamespace(payload=payload)
+                add_hit(SimpleNamespace(payload=payload), "keyword")
 
     except Exception as exc:
         print(f"[WARN] Keyword retrieval skipped: {exc}")
@@ -202,9 +207,19 @@ def collect_planned_hits(client: QdrantClient, patient_id: str | None, question:
             limit=50 if patient_id else 100,
         )
         for hit in hits:
-            chunk_id = hit.payload.get("chunk_id")
-            if chunk_id and chunk_id not in hits_by_chunk_id:
-                hits_by_chunk_id[chunk_id] = hit
+            add_hit(hit, "dense")
+
+    for chunk_id, hit in hits_by_chunk_id.items():
+        sources = retrieval_sources_by_chunk_id.get(chunk_id, set())
+        if "dense" in sources and "keyword" in sources:
+            retrieval_source = "both"
+        elif "keyword" in sources:
+            retrieval_source = "keyword"
+        elif "dense" in sources:
+            retrieval_source = "dense"
+        else:
+            retrieval_source = "unknown"
+        hit.payload["retrieval_source"] = retrieval_source
 
     return list(hits_by_chunk_id.values()), plan
 
@@ -257,6 +272,7 @@ def answer_question(patient_id: str | None, question: str, structured: bool = Fa
                 "document_type": p.get("document_type"),
                 "section_title": p.get("section_title"),
                 "rerank_score": rr_score,
+                "retrieval_source": p.get("retrieval_source"),
             }
         )
 
