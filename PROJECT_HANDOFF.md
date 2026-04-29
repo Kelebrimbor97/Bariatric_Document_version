@@ -920,13 +920,9 @@ Important: pass `COLLECTION_NAME=ehr_chunks_test_v3` explicitly when testing aga
 
 At one point, bad section headers persisted even after code changes. Cause was likely stale `chunks.jsonl` and checkpoint reuse.
 
-Fix:
-
-```text
-Back up documents.jsonl/chunks.jsonl and checkpoints, then rebuild fresh.
-```
 
 ---
+
 
 ## 9. Current development philosophy
 
@@ -970,9 +966,7 @@ Current recommendation:
 Do not tune BM25 yet.
 Keep the conservative hybrid retrieval as the stable baseline.
 ```
-
 ---
-
 
 ## 11. Do not forget
 
