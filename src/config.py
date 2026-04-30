@@ -9,7 +9,12 @@ VLLM_MODEL_NAME = os.getenv("VLLM_MODEL_NAME", "qwen-ehr")
 
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "ehr_chunks")
 
-PROCESSED_DIR = PROJECT_ROOT / "Data" / "processed"
+PROCESSED_DIR = Path(
+    os.getenv(
+        "PROCESSED_DIR",
+        str(PROJECT_ROOT / "Data" / "processed"),
+    )
+)
 QDRANT_STORAGE_DIR = PROJECT_ROOT / "Data" / "qdrant_storage"
 
 DATA_DIR = Path(os.getenv("DATA_DIR", str(PROJECT_ROOT / "Data")))
