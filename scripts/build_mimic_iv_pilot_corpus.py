@@ -1,0 +1,531 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import csv
+import gzip
+import json
+import shutil
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterable
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+import sys
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.chunking import chunk_text_with_sections
+
+
+@dataclass
+class AdmissionCase:
+    subject_id: str
+    hadm_id: str
+    note_id: str
+    discharge_text: str
+    admission: dict[str, str] | None = None
+    diagnoses: list[str] = field(default_factory=list)
+    procedures: list[str] = field(default_factory=list)
+    medications: list[str] = field(default_factory=list)
+
+    @property
+    def patient_id(self) -> str:
+        return f"MIMICIV_{self.subject_id}_{self.hadm_id}"
+
+    @property
+    def patient_folder_name(self) -> str:
+        return f"MIMIC IV Pilot - {self.patient_id}"
+
+
+def find_file(root: Path, filename: str) -> Path:
+    matches = sorted(root.rglob(filename))
+    if not matches:
+        raise SystemExit(f"Could not find {filename!r} under {root}")
+    if len(matches) > 1:
+        print(f"[WARN] Multiple {filename!r} files found; using {matches[0]}")
+    return matches[0]
+
+
+def read_csv_gz(path: Path) -> Iterable[dict[str, str]]:
+    with gzip.open(path, "rt", encoding="utf-8", errors="replace", newline="") as f:
+        reader = csv.DictReader(f)
+        yield from reader
+
+
+def compact(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def unique_preserve_order(values: Iterable[str]) -> list[str]:
+    seen = set()
+    out = []
+    for value in values:
+        value = compact(value)
+        if not value:
+            continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+    return out
+
+
+def choose_discharge_cases(discharge_path: Path, limit_admissions: int, min_text_chars: int) -> list[AdmissionCase]:
+    cases: list[AdmissionCase] = []
+    seen_hadm: set[str] = set()
+
+    for row in read_csv_gz(discharge_path):
+        subject_id = compact(row.get("subject_id"))
+        hadm_id = compact(row.get("hadm_id"))
+        note_id = compact(row.get("note_id")) or f"discharge_{subject_id}_{hadm_id}"
+        text = str(row.get("text") or "").strip()
+
+        if not subject_id or not hadm_id or not text:
+            continue
+        if hadm_id in seen_hadm:
+            continue
+        if len(text) < min_text_chars:
+            continue
+
+        seen_hadm.add(hadm_id)
+        cases.append(AdmissionCase(subject_id=subject_id, hadm_id=hadm_id, note_id=note_id, discharge_text=text))
+        if len(cases) >= limit_admissions:
+            break
+
+    return cases
+
+
+def load_admissions(admissions_path: Path, hadm_ids: set[str]) -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
+    for row in read_csv_gz(admissions_path):
+        hadm_id = compact(row.get("hadm_id"))
+        if hadm_id in hadm_ids:
+            out[hadm_id] = row
+            if len(out) >= len(hadm_ids):
+                break
+    return out
+
+
+def load_icd_dictionary(path: Path) -> dict[tuple[str, str], str]:
+    out: dict[tuple[str, str], str] = {}
+    for row in read_csv_gz(path):
+        code = compact(row.get("icd_code"))
+        version = compact(row.get("icd_version"))
+        title = compact(row.get("long_title"))
+        if code and version and title:
+            out[(code, version)] = title
+    return out
+
+
+def load_diagnoses(
+    diagnoses_path: Path,
+    dictionary: dict[tuple[str, str], str],
+    hadm_ids: set[str],
+    max_per_admission: int,
+) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {hadm_id: [] for hadm_id in hadm_ids}
+    for row in read_csv_gz(diagnoses_path):
+        hadm_id = compact(row.get("hadm_id"))
+        if hadm_id not in hadm_ids:
+            continue
+        code = compact(row.get("icd_code"))
+        version = compact(row.get("icd_version"))
+        title = dictionary.get((code, version)) or code
+        if title and len(out[hadm_id]) < max_per_admission:
+            out[hadm_id].append(title)
+    return {k: unique_preserve_order(v) for k, v in out.items()}
+
+
+def load_procedures(
+    procedures_path: Path,
+    dictionary: dict[tuple[str, str], str],
+    hadm_ids: set[str],
+    max_per_admission: int,
+) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {hadm_id: [] for hadm_id in hadm_ids}
+    for row in read_csv_gz(procedures_path):
+        hadm_id = compact(row.get("hadm_id"))
+        if hadm_id not in hadm_ids:
+            continue
+        code = compact(row.get("icd_code"))
+        version = compact(row.get("icd_version"))
+        title = dictionary.get((code, version)) or code
+        if title and len(out[hadm_id]) < max_per_admission:
+            out[hadm_id].append(title)
+    return {k: unique_preserve_order(v) for k, v in out.items()}
+
+
+def load_medications(prescriptions_path: Path, hadm_ids: set[str], max_per_admission: int) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {hadm_id: [] for hadm_id in hadm_ids}
+    for row in read_csv_gz(prescriptions_path):
+        hadm_id = compact(row.get("hadm_id"))
+        if hadm_id not in hadm_ids:
+            continue
+        drug = compact(row.get("drug"))
+        if drug and len(out[hadm_id]) < max_per_admission:
+            out[hadm_id].append(drug)
+    return {k: unique_preserve_order(v) for k, v in out.items()}
+
+
+def document_meta(case: AdmissionCase, relative_path: str, file_name: str, document_type: str) -> dict[str, Any]:
+    return {
+        "patient_id": case.patient_id,
+        "actual_patient_id": case.patient_id,
+        "patient_folder_name": case.patient_folder_name,
+        "pdf_path": relative_path,
+        "relative_path": relative_path,
+        "path_parts": str(Path(relative_path).parent).split("/"),
+        "file_name": file_name,
+        "path_tags": {"document_families": [], "care_contexts": [], "note_type_candidates": [document_type]},
+        "document_type": document_type,
+    }
+
+
+def add_document(
+    documents: list[dict[str, Any]],
+    chunks: list[dict[str, Any]],
+    case: AdmissionCase,
+    relative_path: str,
+    document_type: str,
+    text: str,
+) -> None:
+    text = text.strip()
+    if not text:
+        return
+
+    file_name = Path(relative_path).name
+    meta = document_meta(case, relative_path, file_name, document_type)
+    doc_record = {
+        **meta,
+        "n_pages": 1,
+        "raw_text": text,
+        "source_format": "direct_text",
+    }
+    documents.append(doc_record)
+
+    page_chunks = chunk_text_with_sections(text)
+    stem = Path(file_name).stem
+    for idx, ch in enumerate(page_chunks):
+        section_title = ch.get("section_title")
+        section_key = section_title or "none"
+        chunk_record = {
+            **meta,
+            "page_num": 1,
+            "section_title": section_title,
+            "section_chunk_index": ch.get("section_chunk_index"),
+            "chunk_id": f"{case.patient_id}::{stem}::p1::s{section_key}::c{idx}",
+            "chunk_text": ch["chunk_text"],
+        }
+        chunks.append(chunk_record)
+
+
+def admission_summary_text(case: AdmissionCase) -> str:
+    adm = case.admission or {}
+    lines = [
+        "Admission Summary",
+        f"Subject ID: {case.subject_id}",
+        f"Hospital admission ID: {case.hadm_id}",
+        f"Admission time: {compact(adm.get('admittime')) or 'not available'}",
+        f"Discharge time: {compact(adm.get('dischtime')) or 'not available'}",
+        f"Admission type: {compact(adm.get('admission_type')) or 'not available'}",
+        f"Admission location: {compact(adm.get('admission_location')) or 'not available'}",
+        f"Discharge location: {compact(adm.get('discharge_location')) or 'not available'}",
+        f"Race: {compact(adm.get('race')) or 'not available'}",
+        f"Hospital expire flag: {compact(adm.get('hospital_expire_flag')) or 'not available'}",
+    ]
+    return "\n".join(lines)
+
+
+def diagnoses_text(case: AdmissionCase) -> str:
+    lines = ["Coded Diagnoses", f"Hospital admission ID: {case.hadm_id}"]
+    if case.diagnoses:
+        lines.extend(f"{idx}. {title}" for idx, title in enumerate(case.diagnoses, start=1))
+    else:
+        lines.append("No ICD-coded diagnoses were loaded for this pilot admission.")
+    return "\n".join(lines)
+
+
+def procedures_text(case: AdmissionCase) -> str:
+    lines = ["Coded Procedures", f"Hospital admission ID: {case.hadm_id}"]
+    if case.procedures:
+        lines.extend(f"{idx}. {title}" for idx, title in enumerate(case.procedures, start=1))
+    else:
+        lines.append("No ICD-coded procedures were loaded for this pilot admission.")
+    return "\n".join(lines)
+
+
+def medications_text(case: AdmissionCase) -> str:
+    lines = ["Medication List", f"Hospital admission ID: {case.hadm_id}"]
+    if case.medications:
+        lines.extend(f"{idx}. {drug}" for idx, drug in enumerate(case.medications, start=1))
+    else:
+        lines.append("No medications were loaded from prescriptions for this pilot admission.")
+    return "\n".join(lines)
+
+
+def add_case_documents(
+    documents: list[dict[str, Any]],
+    chunks: list[dict[str, Any]],
+    case: AdmissionCase,
+) -> None:
+    add_document(
+        documents,
+        chunks,
+        case,
+        relative_path="Clinical Documents/Inpatient Core/discharge_summary.txt",
+        document_type="discharge_summary",
+        text=case.discharge_text,
+    )
+    add_document(
+        documents,
+        chunks,
+        case,
+        relative_path="Clinical Documents/Inpatient Core/clinic_note_admission_summary.txt",
+        document_type="clinic_note",
+        text=admission_summary_text(case),
+    )
+    add_document(
+        documents,
+        chunks,
+        case,
+        relative_path="Clinical Documents/Inpatient Core/clinic_note_diagnoses.txt",
+        document_type="clinic_note",
+        text=diagnoses_text(case),
+    )
+    add_document(
+        documents,
+        chunks,
+        case,
+        relative_path="Perioperative Documents/operative_report_procedures.txt",
+        document_type="operative_report",
+        text=procedures_text(case),
+    )
+    add_document(
+        documents,
+        chunks,
+        case,
+        relative_path="Clinical Documents/Inpatient Core/medication_list.txt",
+        document_type="medication_list",
+        text=medications_text(case),
+    )
+
+
+def add_question(
+    questions: list[dict[str, str]],
+    expected: list[dict[str, Any]],
+    case: AdmissionCase,
+    question: str,
+    required_terms: list[str],
+    required_doc_types: list[str],
+) -> None:
+    required_terms = [compact(term) for term in required_terms if compact(term)]
+    if not required_terms:
+        return
+
+    questions.append({"patient_id": case.patient_id, "question": question})
+    expected.append(
+        {
+            "patient_id": case.patient_id,
+            "question": question,
+            "required_answer_terms": required_terms,
+            "required_any_terms": [],
+            "required_source_document_types": required_doc_types,
+            "forbidden_answer_terms": [],
+        }
+    )
+
+
+def make_questions_for_case(
+    case: AdmissionCase,
+    max_terms_per_question: int,
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    questions: list[dict[str, str]] = []
+    expected: list[dict[str, Any]] = []
+    adm = case.admission or {}
+
+    discharge_location = compact(adm.get("discharge_location"))
+    if discharge_location:
+        add_question(
+            questions,
+            expected,
+            case,
+            "What discharge location or disposition is documented?",
+            [discharge_location],
+            ["clinic_note"],
+        )
+
+    admission_type = compact(adm.get("admission_type"))
+    if admission_type:
+        add_question(
+            questions,
+            expected,
+            case,
+            "What admission type is documented?",
+            [admission_type],
+            ["clinic_note"],
+        )
+
+    if case.diagnoses:
+        add_question(
+            questions,
+            expected,
+            case,
+            "What ICD-coded diagnoses are documented for this admission?",
+            case.diagnoses[:max_terms_per_question],
+            ["clinic_note"],
+        )
+
+    if case.medications:
+        add_question(
+            questions,
+            expected,
+            case,
+            "What medications are documented for this admission?",
+            case.medications[:max_terms_per_question],
+            ["medication_list"],
+        )
+
+    if case.procedures:
+        add_question(
+            questions,
+            expected,
+            case,
+            "What ICD-coded procedures are documented for this admission?",
+            case.procedures[:max_terms_per_question],
+            ["operative_report"],
+        )
+
+    return questions, expected
+
+
+def write_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with path.open("w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            count += 1
+    return count
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Build a small MIMIC-IV + MIMIC-IV-Note pilot corpus directly as documents.jsonl/chunks.jsonl. "
+            "This avoids CSV/text -> PDF -> PDF extraction and isolates checkpoints via --processed-dir."
+        )
+    )
+    parser.add_argument(
+        "--mimiciv-root",
+        type=Path,
+        default=Path("/media/nishad/Desk SSD/Datasets/mimic/physionet.org/files/mimiciv"),
+    )
+    parser.add_argument(
+        "--mimic-note-root",
+        type=Path,
+        default=Path("/media/nishad/Desk SSD/Datasets/mimic/physionet.org/files/mimic-iv-note"),
+    )
+    parser.add_argument(
+        "--processed-dir",
+        type=Path,
+        default=Path("Data/processed_mimic_iv_pilot"),
+        help="Output directory for documents.jsonl and chunks.jsonl.",
+    )
+    parser.add_argument(
+        "--questions-out",
+        type=Path,
+        default=Path("eval/mimic_iv_pilot_questions.jsonl"),
+    )
+    parser.add_argument(
+        "--expected-out",
+        type=Path,
+        default=Path("eval/mimic_iv_pilot_expected_checks.jsonl"),
+    )
+    parser.add_argument("--limit-admissions", type=int, default=10)
+    parser.add_argument("--max-questions", type=int, default=25)
+    parser.add_argument("--max-diagnoses", type=int, default=5)
+    parser.add_argument("--max-procedures", type=int, default=5)
+    parser.add_argument("--max-medications", type=int, default=8)
+    parser.add_argument("--max-terms-per-question", type=int, default=2)
+    parser.add_argument("--min-discharge-text-chars", type=int, default=1000)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+
+    if args.processed_dir.exists():
+        if not args.force:
+            raise SystemExit(
+                f"Processed directory already exists: {args.processed_dir}\n"
+                "Use --force if you want to overwrite/regenerate it."
+            )
+        shutil.rmtree(args.processed_dir)
+    args.processed_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.force:
+        for path in (args.questions_out, args.expected_out):
+            if path.exists():
+                path.unlink()
+
+    discharge_path = find_file(args.mimic_note_root, "discharge.csv.gz")
+    admissions_path = find_file(args.mimiciv_root, "admissions.csv.gz")
+    diagnoses_path = find_file(args.mimiciv_root, "diagnoses_icd.csv.gz")
+    d_diagnoses_path = find_file(args.mimiciv_root, "d_icd_diagnoses.csv.gz")
+    procedures_path = find_file(args.mimiciv_root, "procedures_icd.csv.gz")
+    d_procedures_path = find_file(args.mimiciv_root, "d_icd_procedures.csv.gz")
+    prescriptions_path = find_file(args.mimiciv_root, "prescriptions.csv.gz")
+
+    print(f"Using discharge notes: {discharge_path}")
+    print(f"Using MIMIC-IV admissions: {admissions_path}")
+    print(f"Writing processed corpus to: {args.processed_dir}")
+
+    cases = choose_discharge_cases(discharge_path, args.limit_admissions, args.min_discharge_text_chars)
+    if not cases:
+        raise SystemExit("No discharge-summary cases found for the requested pilot settings.")
+
+    hadm_ids = {case.hadm_id for case in cases}
+    admissions = load_admissions(admissions_path, hadm_ids)
+    diag_dict = load_icd_dictionary(d_diagnoses_path)
+    proc_dict = load_icd_dictionary(d_procedures_path)
+    diagnoses = load_diagnoses(diagnoses_path, diag_dict, hadm_ids, args.max_diagnoses)
+    procedures = load_procedures(procedures_path, proc_dict, hadm_ids, args.max_procedures)
+    medications = load_medications(prescriptions_path, hadm_ids, args.max_medications)
+
+    documents: list[dict[str, Any]] = []
+    chunks: list[dict[str, Any]] = []
+    all_questions: list[dict[str, str]] = []
+    all_expected: list[dict[str, Any]] = []
+
+    for case in cases:
+        case.admission = admissions.get(case.hadm_id)
+        case.diagnoses = diagnoses.get(case.hadm_id, [])
+        case.procedures = procedures.get(case.hadm_id, [])
+        case.medications = medications.get(case.hadm_id, [])
+        add_case_documents(documents, chunks, case)
+
+        questions, expected = make_questions_for_case(case, args.max_terms_per_question)
+        for q, exp in zip(questions, expected):
+            if len(all_questions) >= args.max_questions:
+                break
+            all_questions.append(q)
+            all_expected.append(exp)
+        if len(all_questions) >= args.max_questions:
+            break
+
+    n_docs = write_jsonl(args.processed_dir / "documents.jsonl", documents)
+    n_chunks = write_jsonl(args.processed_dir / "chunks.jsonl", chunks)
+    n_questions = write_jsonl(args.questions_out, all_questions)
+    n_expected = write_jsonl(args.expected_out, all_expected)
+
+    print(f"Wrote admissions: {len(cases)}")
+    print(f"Wrote documents: {n_docs} -> {args.processed_dir / 'documents.jsonl'}")
+    print(f"Wrote chunks: {n_chunks} -> {args.processed_dir / 'chunks.jsonl'}")
+    print(f"Wrote questions: {n_questions} -> {args.questions_out}")
+    print(f"Wrote expected checks: {n_expected} -> {args.expected_out}")
+    print()
+    print("Index with:")
+    print(f"  PROCESSED_DIR='{args.processed_dir}' COLLECTION_NAME=ehr_chunks_mimic_iv_pilot python scripts/index_qdrant_medcpt.py")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
