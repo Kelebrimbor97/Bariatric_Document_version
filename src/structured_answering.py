@@ -54,6 +54,14 @@ Rules:
 - For broad "what is documented" questions, do not list unrelated absent items in missing_information.
 - Keep rationale concise and evidence-tied.
 
+List-style evidence rules:
+- Evidence blocks may include evidence_kind metadata such as diagnosis_list, procedure_list, medication_list, admission_summary, or discharge_summary.
+- If the question asks what diagnoses, ICD-coded diagnoses, procedures, ICD-coded procedures, or medications are documented, and a relevant list evidence block is present, treat that list as authoritative retrieved evidence.
+- For diagnosis_list, procedure_list, and medication_list evidence, copy requested list items verbatim from the evidence. Do not summarize, shorten, normalize, rename, or paraphrase coded diagnoses, coded procedures, or medication names.
+- If a relevant list evidence block is present and contains list items, do not answer not_found for the list as a whole.
+- When the question asks "what ... are documented", include the relevant list items in concise_answer and in finding.value. If there are several relevant items, use a JSON array or a semicolon-separated string.
+- It is better to copy a documented list item exactly than to provide a more natural but less exact clinical paraphrase.
+
 Retrieval plan:
 {json.dumps(retrieval_plan, ensure_ascii=False)}
 
