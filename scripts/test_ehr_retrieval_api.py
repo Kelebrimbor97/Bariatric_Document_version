@@ -75,28 +75,51 @@ def print_result(result: dict[str, Any], show_answer: bool = True) -> None:
         print(f"    chunk_id={source.get('chunk_id')}")
 
 
-def load_questions(args: argparse.Namespace) -> list[str]:
+def load_question_items(args: argparse.Namespace) -> list[dict[str, str | None]]:
     if args.question:
-        return [args.question]
+        return [
+            {
+                "patient_id": args.patient_id,
+                "question": args.question,
+            }
+        ]
 
     if args.questions_file:
         questions_path = Path(args.questions_file)
-        questions = []
+        items = []
         with questions_path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
+
                 try:
                     obj = json.loads(line)
                     q = obj.get("question")
                     if q:
-                        questions.append(str(q))
+                        items.append(
+                            {
+                                "patient_id": obj.get("patient_id", args.patient_id),
+                                "question": str(q),
+                            }
+                        )
                 except json.JSONDecodeError:
-                    questions.append(line)
-        return questions
+                    items.append(
+                        {
+                            "patient_id": args.patient_id,
+                            "question": line,
+                        }
+                    )
 
-    return DEFAULT_QUESTIONS
+        return items
+
+    return [
+        {
+            "patient_id": args.patient_id,
+            "question": q,
+        }
+        for q in DEFAULT_QUESTIONS
+    ]
 
 
 def main() -> int:
@@ -121,8 +144,8 @@ def main() -> int:
     parser.add_argument("--structured", action="store_true", help="Request structured JSON answer mode")
     args = parser.parse_args()
 
-    questions = load_questions(args)
-    if not questions:
+    question_items = load_question_items(args)
+    if not question_items:
         print("No questions provided.", file=sys.stderr)
         return 2
 
@@ -139,20 +162,24 @@ def main() -> int:
         report_f = report_path.open("w", encoding="utf-8")
 
     try:
-        for idx, question in enumerate(questions, start=1):
+        for idx, item in enumerate(question_items, start=1):
+            question = item["question"]
+            patient_id = item.get("patient_id")
+
             print("\n" + "#" * 88)
-            print(f"QUESTION {idx}/{len(questions)}")
+            print(f"QUESTION {idx}/{len(question_items)}")
             print("#" * 88)
+            print(f"patient_id: {patient_id}")
             print(question)
 
             result = post_question(
                 args.base_url,
                 question,
-                patient_id=args.patient_id,
+                patient_id=patient_id,
                 structured=args.structured,
             )
             result_record = {
-                "patient_id": args.patient_id,
+                "patient_id": patient_id,
                 "question": question,
                 "structured": args.structured,
                 "result": result,
@@ -164,9 +191,9 @@ def main() -> int:
 
             if report_f:
                 report_f.write("\n\n" + "#" * 88 + "\n")
-                report_f.write(f"# QUESTION {idx}/{len(questions)}\n")
+                report_f.write(f"# QUESTION {idx}/{len(question_items)}\n")
                 report_f.write("#" * 88 + "\n\n")
-                report_f.write(f"Patient ID: {args.patient_id}\n\n")
+                report_f.write(f"Patient ID: {patient_id}\n\n")
                 report_f.write(f"Structured: {args.structured}\n\n")
                 report_f.write("## Question\n\n")
                 report_f.write(question + "\n\n")

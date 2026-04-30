@@ -16,18 +16,30 @@ def load_json_or_jsonl(path: Path) -> list[dict[str, Any]]:
     if not text:
         return []
 
-    # Direct JSON object, e.g. curl output.
-    if text.startswith("{"):
+    # First try a normal JSON object/array, e.g. curl output.
+    try:
         obj = json.loads(text)
-        return [obj]
+        if isinstance(obj, list):
+            return [x for x in obj if isinstance(x, dict)]
+        if isinstance(obj, dict):
+            return [obj]
+    except json.JSONDecodeError:
+        pass
 
-    # JSONL, e.g. scripts/test_ehr_retrieval_api.py --out output.
+    # Fall back to JSONL, e.g. scripts/test_ehr_retrieval_api.py --out output.
     records = []
-    for line in text.splitlines():
+    for line_num, line in enumerate(text.splitlines(), start=1):
         line = line.strip()
         if not line:
             continue
-        records.append(json.loads(line))
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"Invalid JSONL in {path} at line {line_num}: {exc}") from exc
+
+        if isinstance(obj, dict):
+            records.append(obj)
+
     return records
 
 
