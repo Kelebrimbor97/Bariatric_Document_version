@@ -1,6 +1,6 @@
 # Bariatric Document RAG Project — Handoff Notes
 
-_Last updated in chat: 2026-04-29 — BM25 hybrid `/ask` retrieval validated_
+_Last updated in chat: 2026-04-29 — synthetic bariatric testbed + structured checker baseline added_
 
 This file is intended to be pasted or uploaded into a new ChatGPT chat so the next chat can continue without needing the oversized previous thread.
 
@@ -23,7 +23,7 @@ feature/public-ehr-rag-testbed
 As of the last verification in this chat, this branch was:
 
 ```text
-22 commits ahead of main
+36 commits ahead of main
 0 commits behind main
 ```
 
@@ -641,6 +641,126 @@ This validates standalone BM25 loading/search.
 
 ---
 
+### 5.15 Retrieval source inspection helper
+
+File:
+
+```text
+scripts/inspect_retrieval_sources.py
+Added a helper script to inspect final /ask sources by retrieval_source.
+This was used to inspect the single keyword-only source from the hybrid smoke test. The source was:
+
+record: 5
+source rank: 7
+question: Is there evidence of B12, iron, ferritin, thiamine, vitamin D, calcium, or PTH monitoring?
+document_type: clinic_note
+section_title: None
+rerank_score: -11.4140
+
+The chunk was mostly boilerplate/admin text from a nutrition clinic note and did not contain the requested micronutrient/lab terms.
+
+Conclusion:
+
+The single keyword-only survivor was noisy, but harmless.
+BM25 is functioning as conservative recall support.
+Do not tune BM25 yet based on this one noisy hit.
+```
+### 5.16 Synthetic/public-safe bariatric testbed
+
+Files:
+```text
+scripts/create_synthetic_bariatric_testbed.py
+scripts/check_synthetic_smoke_results.py
+eval/synthetic_bariatric_smoke_questions.jsonl
+eval/synthetic_bariatric_expected_checks.jsonl
+```
+
+Added a small no-PHI synthetic PDF testbed with three patients:
+
+```text
+SYN001:
+  sleeve gastrectomy
+  nutrition follow-up
+  medication list
+  micronutrient lab report with B12, iron, ferritin, vitamin D, calcium, PTH
+  thiamine explicitly not measured/ordered
+
+SYN002:
+  preoperative Roux-en-Y evaluation
+  no prior bariatric surgery documented
+  basic labs only
+  micronutrient monitoring explicitly absent
+
+SYN003:
+  postoperative Roux-en-Y dehydration/nausea
+  discharge medications include thiamine 100 mg daily for 14 days
+  bariatric multivitamin daily
+  continue calcium citrate and vitamin D
+```
+
+The generator writes text-based PDFs under:
+
+```text
+Data/public_testbed/synthetic_bariatric_pdf/Test Patients
+```
+and writes smoke questions to:
+
+```text
+eval/synthetic_bariatric_smoke_questions.jsonl
+```
+
+The deterministic checker validates expected answer terms, required source document types, forbidden answer terms, and basic structured-answer shape.
+
+Current synthetic checker baseline:
+
+```text
+The deterministic checker validates expected answer terms, required source document types, forbidden answer terms, and basic structured-answer shape.
+
+Current synthetic checker baseline:
+```
+Important design decision:
+
+```text
+Do not add agentic verifier/retry logic yet.
+A verifier was considered, but it added complexity without clear benefit.
+Prefer deterministic synthetic regression checks for now.
+```
+
+### 5.17 Structured answer prompt tightening
+
+File:
+
+```text
+src/structured_answering.py
+```
+
+The structured prompt was tightened to reduce over-answering on broad questions.
+
+New behavior validated on `SYN003`:
+
+Question:
+
+```text
+What thiamine or vitamin supplementation is documented?
+```
+
+Final desired answer behavior:
+
+```text
+The documentation includes thiamine 100 mg daily for 14 days,
+a bariatric multivitamin daily, and continued calcium citrate and vitamin D supplementation.
+```
+
+The structured answer should not add unrelated missing items such as B12, folate, or iron unless explicitly asked.
+
+Prompt rules added:
+
+```text
+Only create findings for items directly requested by the question or clearly necessary to answer it.
+Do not add extra not_found findings for unrelated labs, vitamins, diagnoses, or medications.
+Only put items in missing_information if the user explicitly requested them and they are absent from the evidence.
+For broad "what is documented" questions, do not list unrelated absent items in missing_information.
+```
 ## 6. Important test commands
 
 ### Pull current branch
@@ -700,6 +820,67 @@ python scripts/check_structured_smoke_results.py   Data/processed/ehr_retrieval_
 ```
 
 ### Keyword retrieval smoke test
+
+### Synthetic bariatric testbed generation
+
+```bash
+python scripts/create_synthetic_bariatric_testbed.py --force
+```
+
+Build/index into a separate synthetic Qdrant collection:
+
+```bash
+PATIENTS_ROOT="$PWD/Data/public_testbed/synthetic_bariatric_pdf/Test Patients" \
+COLLECTION_NAME=ehr_chunks_synth_v1 \
+./run_build.sh
+```
+Restart APIs against the synthetic collection:
+
+```bash
+COLLECTION_NAME=ehr_chunks_synth_v1 ./restart_services.sh
+```
+Run the three deterministic synthetic baseline questions:
+
+```bash
+python scripts/test_ehr_retrieval_api.py \
+  --patient-id SYN001 \
+  --question "Is there evidence of B12, iron, ferritin, thiamine, vitamin D, calcium, or PTH monitoring?" \
+  --structured \
+  --out Data/processed/synth_SYN001_micronutrients_result_v2.jsonl \
+  --report-out Data/processed/synth_SYN001_micronutrients_report_v2.md
+
+python scripts/test_ehr_retrieval_api.py \
+  --patient-id SYN002 \
+  --question "Is there evidence of micronutrient laboratory monitoring?" \
+  --structured \
+  --out Data/processed/synth_SYN002_micronutrients_result_v2.jsonl \
+  --report-out Data/processed/synth_SYN002_micronutrients_report_v2.md
+
+python scripts/test_ehr_retrieval_api.py \
+  --patient-id SYN003 \
+  --question "What thiamine or vitamin supplementation is documented?" \
+  --structured \
+  --out Data/processed/synth_SYN003_thiamine_result_v3.jsonl \
+  --report-out Data/processed/synth_SYN003_thiamine_report_v3.md
+```
+
+Run the synthetic checker:
+
+```bash
+python scripts/check_synthetic_smoke_results.py \
+  Data/processed/synth_SYN001_micronutrients_result_v2.jsonl \
+  Data/processed/synth_SYN002_micronutrients_result_v2.jsonl \
+  Data/processed/synth_SYN003_thiamine_result_v3.jsonl \
+  --show-passing
+```
+
+Expected result:
+
+```text
+records: 3
+passed: 3
+failed: 0
+```
 
 ```bash
 python scripts/test_keyword_retrieval.py   --patient-id 021494762   --limit 8
@@ -948,24 +1129,35 @@ Do not spend too much time on perfect section detection or overly strict structu
 
 ## 10. Recommended next step
 
-The BM25 hybrid retrieval wiring is now validated.
+## 10. Recommended next step
 
-The next logical implementation step is to preserve this known-good state and then decide whether to tune retrieval behavior.
+The current stable baseline is:
 
-Possible next tasks:
-
-1. Inspect the single `keyword`-only source from the latest smoke test and confirm it is clinically reasonable.
-2. Add a small smoke-test summary helper for `retrieval_source` counts if repeated manual counting becomes annoying.
-3. Leave retrieval tuning alone unless keyword-only hits look noisy.
-4. Consider updating OpenWebUI prompts/tool instructions to surface retrieval diagnostics only when debugging.
-5. Later, move toward public/synthetic testbed data before relying on private bariatric data.
+```text
+Private clean metadata + hybrid retrieval baseline works.
+BM25 is conservatively integrated into /ask.
+The only keyword-only private source was noisy but harmless.
+Synthetic/public-safe bariatric PDF testbed works.
+Synthetic deterministic checker passes 3/3.
+Structured prompt now behaves better for broad "what is documented?" questions.
+```
 
 Current recommendation:
 
 ```text
 Do not tune BM25 yet.
-Keep the conservative hybrid retrieval as the stable baseline.
+Do not add agentic verifier/retry workflows yet.
+Keep the conservative hybrid retrieval and deterministic synthetic checks as the baseline.
 ```
+
+Possible next tasks:
+
+1. Expand the synthetic checker from 3 baseline questions to more of the 7 synthetic smoke questions.
+2. Add broader task-level synthetic checks: procedure history, post-op complication, follow-up plan, medication list, missing labs, and mixed evidence.
+3. Improve scripts/test_ehr_retrieval_api.py so JSONL question files can include per-question patient_id.
+4. Consider OpenWebUI prompt/tool polish so retrieval diagnostics are shown only in debug mode.
+5. Later, consider a larger synthetic/public testbed before returning to private bariatric data tuning.
+6. Consider branch splitting before PR/merge because the feature branch is now large.
 ---
 
 ## 11. Do not forget
@@ -1089,48 +1281,39 @@ start_services.sh
 
 ## 15. Recommended immediate next action
 
-Inspect the keyword-only source from the latest hybrid smoke test.
+The keyword-only source has already been inspected and was noisy but harmless. The BM25 `/ask` integration should be left alone for now.
 
-Useful command:
+Recommended next baby step:
 
-```bash
-python - <<'PY'
-import json
-
-path = "Data/processed/ehr_retrieval_hybrid_sources_smoke_results.jsonl"
-
-def find_sources(obj):
-    if isinstance(obj, dict):
-        if isinstance(obj.get("sources"), list):
-            return obj["sources"]
-        for v in obj.values():
-            found = find_sources(v)
-            if found is not None:
-                return found
-    elif isinstance(obj, list):
-        for item in obj:
-            found = find_sources(item)
-            if found is not None:
-                return found
-    return None
-
-with open(path) as f:
-    for idx, line in enumerate(f, start=1):
-        if not line.strip():
-            continue
-        r = json.loads(line)
-        for rank, s in enumerate(find_sources(r) or [], start=1):
-            if s.get("retrieval_source") == "keyword":
-                print("=" * 100)
-                print(f"record: {idx}")
-                print(f"source rank: {rank}")
-                print("document_type:", s.get("document_type"))
-                print("section_title:", s.get("section_title"))
-                print("rerank_score:", s.get("rerank_score"))
-                print("relative_path:", s.get("relative_path"))
-                print("page_num:", s.get("page_num"))
-                print("chunk_id:", s.get("chunk_id"))
-PY
+```text
+Expand the synthetic deterministic checker to cover the remaining synthetic smoke questions.
 ```
 
-If the keyword-only source looks reasonable, consider the BM25 `/ask` integration validated and stable.
+Current committed synthetic smoke questions:
+```text
+eval/synthetic_bariatric_smoke_questions.jsonl
+```
+
+Current committed expected-check file:
+
+```text
+eval/synthetic_bariatric_expected_checks.jsonl
+```
+
+The current checker baseline covers 3 questions and passes 3/3.
+
+Good next checks to add:
+
+```text
+SYN001:
+  What bariatric procedure or surgical history is documented?
+  What vitamin or micronutrient supplementation is documented?
+
+SYN002:
+  What bariatric procedure is planned or documented?
+
+SYN003:
+  What postoperative complication or follow-up issue is documented?
+```
+
+Avoid overfitting to exact wording. These checks should remain lightweight regression probes, not rigid clinical grading.
