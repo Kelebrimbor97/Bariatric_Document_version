@@ -6,12 +6,12 @@ import csv
 import gzip
 import json
 import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-import sys
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.chunking import chunk_text_with_sections
@@ -48,8 +48,7 @@ def find_file(root: Path, filename: str) -> Path:
 
 def read_csv_gz(path: Path) -> Iterable[dict[str, str]]:
     with gzip.open(path, "rt", encoding="utf-8", errors="replace", newline="") as f:
-        reader = csv.DictReader(f)
-        yield from reader
+        yield from csv.DictReader(f)
 
 
 def compact(value: Any) -> str:
@@ -57,8 +56,8 @@ def compact(value: Any) -> str:
 
 
 def unique_preserve_order(values: Iterable[str]) -> list[str]:
-    seen = set()
-    out = []
+    seen: set[str] = set()
+    out: list[str] = []
     for value in values:
         value = compact(value)
         if not value:
@@ -80,12 +79,9 @@ def choose_discharge_cases(discharge_path: Path, limit_admissions: int, min_text
         hadm_id = compact(row.get("hadm_id"))
         note_id = compact(row.get("note_id")) or f"discharge_{subject_id}_{hadm_id}"
         text = str(row.get("text") or "").strip()
-
         if not subject_id or not hadm_id or not text:
             continue
-        if hadm_id in seen_hadm:
-            continue
-        if len(text) < min_text_chars:
+        if hadm_id in seen_hadm or len(text) < min_text_chars:
             continue
 
         seen_hadm.add(hadm_id)
@@ -118,14 +114,14 @@ def load_icd_dictionary(path: Path) -> dict[tuple[str, str], str]:
     return out
 
 
-def load_diagnoses(
-    diagnoses_path: Path,
+def load_icd_items(
+    path: Path,
     dictionary: dict[tuple[str, str], str],
     hadm_ids: set[str],
     max_per_admission: int,
 ) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {hadm_id: [] for hadm_id in hadm_ids}
-    for row in read_csv_gz(diagnoses_path):
+    for row in read_csv_gz(path):
         hadm_id = compact(row.get("hadm_id"))
         if hadm_id not in hadm_ids:
             continue
@@ -137,28 +133,9 @@ def load_diagnoses(
     return {k: unique_preserve_order(v) for k, v in out.items()}
 
 
-def load_procedures(
-    procedures_path: Path,
-    dictionary: dict[tuple[str, str], str],
-    hadm_ids: set[str],
-    max_per_admission: int,
-) -> dict[str, list[str]]:
+def load_medications(path: Path, hadm_ids: set[str], max_per_admission: int) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {hadm_id: [] for hadm_id in hadm_ids}
-    for row in read_csv_gz(procedures_path):
-        hadm_id = compact(row.get("hadm_id"))
-        if hadm_id not in hadm_ids:
-            continue
-        code = compact(row.get("icd_code"))
-        version = compact(row.get("icd_version"))
-        title = dictionary.get((code, version)) or code
-        if title and len(out[hadm_id]) < max_per_admission:
-            out[hadm_id].append(title)
-    return {k: unique_preserve_order(v) for k, v in out.items()}
-
-
-def load_medications(prescriptions_path: Path, hadm_ids: set[str], max_per_admission: int) -> dict[str, list[str]]:
-    out: dict[str, list[str]] = {hadm_id: [] for hadm_id in hadm_ids}
-    for row in read_csv_gz(prescriptions_path):
+    for row in read_csv_gz(path):
         hadm_id = compact(row.get("hadm_id"))
         if hadm_id not in hadm_ids:
             continue
@@ -168,7 +145,14 @@ def load_medications(prescriptions_path: Path, hadm_ids: set[str], max_per_admis
     return {k: unique_preserve_order(v) for k, v in out.items()}
 
 
-def document_meta(case: AdmissionCase, relative_path: str, file_name: str, document_type: str) -> dict[str, Any]:
+def document_meta(
+    case: AdmissionCase,
+    relative_path: str,
+    file_name: str,
+    document_type: str,
+    evidence_kind: str,
+    source_table: str,
+) -> dict[str, Any]:
     return {
         "patient_id": case.patient_id,
         "actual_patient_id": case.patient_id,
@@ -177,8 +161,14 @@ def document_meta(case: AdmissionCase, relative_path: str, file_name: str, docum
         "relative_path": relative_path,
         "path_parts": str(Path(relative_path).parent).split("/"),
         "file_name": file_name,
-        "path_tags": {"document_families": [], "care_contexts": [], "note_type_candidates": [document_type]},
+        "path_tags": {
+            "document_families": [],
+            "care_contexts": [],
+            "note_type_candidates": [document_type],
+        },
         "document_type": document_type,
+        "evidence_kind": evidence_kind,
+        "source_table": source_table,
     }
 
 
@@ -188,6 +178,8 @@ def add_document(
     case: AdmissionCase,
     relative_path: str,
     document_type: str,
+    evidence_kind: str,
+    source_table: str,
     text: str,
 ) -> None:
     text = text.strip()
@@ -195,29 +187,23 @@ def add_document(
         return
 
     file_name = Path(relative_path).name
-    meta = document_meta(case, relative_path, file_name, document_type)
-    doc_record = {
-        **meta,
-        "n_pages": 1,
-        "raw_text": text,
-        "source_format": "direct_text",
-    }
-    documents.append(doc_record)
+    meta = document_meta(case, relative_path, file_name, document_type, evidence_kind, source_table)
+    documents.append({**meta, "n_pages": 1, "raw_text": text, "source_format": "direct_text"})
 
-    page_chunks = chunk_text_with_sections(text)
     stem = Path(file_name).stem
-    for idx, ch in enumerate(page_chunks):
+    for idx, ch in enumerate(chunk_text_with_sections(text)):
         section_title = ch.get("section_title")
         section_key = section_title or "none"
-        chunk_record = {
-            **meta,
-            "page_num": 1,
-            "section_title": section_title,
-            "section_chunk_index": ch.get("section_chunk_index"),
-            "chunk_id": f"{case.patient_id}::{stem}::p1::s{section_key}::c{idx}",
-            "chunk_text": ch["chunk_text"],
-        }
-        chunks.append(chunk_record)
+        chunks.append(
+            {
+                **meta,
+                "page_num": 1,
+                "section_title": section_title,
+                "section_chunk_index": ch.get("section_chunk_index"),
+                "chunk_id": f"{case.patient_id}::{stem}::p1::s{section_key}::c{idx}",
+                "chunk_text": ch["chunk_text"],
+            }
+        )
 
 
 def admission_summary_text(case: AdmissionCase) -> str:
@@ -237,77 +223,80 @@ def admission_summary_text(case: AdmissionCase) -> str:
     return "\n".join(lines)
 
 
-def diagnoses_text(case: AdmissionCase) -> str:
-    lines = ["Coded Diagnoses", f"Hospital admission ID: {case.hadm_id}"]
-    if case.diagnoses:
-        lines.extend(f"{idx}. {title}" for idx, title in enumerate(case.diagnoses, start=1))
+def list_text(title: str, hadm_id: str, items: list[str], empty_message: str) -> str:
+    lines = [title, f"Hospital admission ID: {hadm_id}"]
+    if items:
+        lines.extend(f"{idx}. {item}" for idx, item in enumerate(items, start=1))
     else:
-        lines.append("No ICD-coded diagnoses were loaded for this pilot admission.")
+        lines.append(empty_message)
     return "\n".join(lines)
 
 
-def procedures_text(case: AdmissionCase) -> str:
-    lines = ["Coded Procedures", f"Hospital admission ID: {case.hadm_id}"]
-    if case.procedures:
-        lines.extend(f"{idx}. {title}" for idx, title in enumerate(case.procedures, start=1))
-    else:
-        lines.append("No ICD-coded procedures were loaded for this pilot admission.")
-    return "\n".join(lines)
-
-
-def medications_text(case: AdmissionCase) -> str:
-    lines = ["Medication List", f"Hospital admission ID: {case.hadm_id}"]
-    if case.medications:
-        lines.extend(f"{idx}. {drug}" for idx, drug in enumerate(case.medications, start=1))
-    else:
-        lines.append("No medications were loaded from prescriptions for this pilot admission.")
-    return "\n".join(lines)
-
-
-def add_case_documents(
-    documents: list[dict[str, Any]],
-    chunks: list[dict[str, Any]],
-    case: AdmissionCase,
-) -> None:
+def add_case_documents(documents: list[dict[str, Any]], chunks: list[dict[str, Any]], case: AdmissionCase) -> None:
     add_document(
         documents,
         chunks,
         case,
         relative_path="Clinical Documents/Inpatient Core/discharge_summary.txt",
         document_type="discharge_summary",
+        evidence_kind="discharge_summary",
+        source_table="discharge",
         text=case.discharge_text,
     )
     add_document(
         documents,
         chunks,
         case,
-        relative_path="Clinical Documents/Inpatient Core/clinic_note_admission_summary.txt",
+        relative_path="Clinical Documents/Inpatient Core/admission_summary.txt",
         document_type="clinic_note",
+        evidence_kind="admission_summary",
+        source_table="admissions",
         text=admission_summary_text(case),
     )
     add_document(
         documents,
         chunks,
         case,
-        relative_path="Clinical Documents/Inpatient Core/clinic_note_diagnoses.txt",
+        relative_path="Structured Documents/diagnosis_list.txt",
         document_type="clinic_note",
-        text=diagnoses_text(case),
+        evidence_kind="diagnosis_list",
+        source_table="diagnoses_icd",
+        text=list_text(
+            "Coded Diagnoses",
+            case.hadm_id,
+            case.diagnoses,
+            "No ICD-coded diagnoses were loaded for this pilot admission.",
+        ),
     )
     add_document(
         documents,
         chunks,
         case,
-        relative_path="Perioperative Documents/operative_report_procedures.txt",
+        relative_path="Structured Documents/procedure_list.txt",
         document_type="operative_report",
-        text=procedures_text(case),
+        evidence_kind="procedure_list",
+        source_table="procedures_icd",
+        text=list_text(
+            "Coded Procedures",
+            case.hadm_id,
+            case.procedures,
+            "No ICD-coded procedures were loaded for this pilot admission.",
+        ),
     )
     add_document(
         documents,
         chunks,
         case,
-        relative_path="Clinical Documents/Inpatient Core/medication_list.txt",
+        relative_path="Structured Documents/medication_list.txt",
         document_type="medication_list",
-        text=medications_text(case),
+        evidence_kind="medication_list",
+        source_table="prescriptions",
+        text=list_text(
+            "Medication List",
+            case.hadm_id,
+            case.medications,
+            "No medications were loaded from prescriptions for this pilot admission.",
+        ),
     )
 
 
@@ -318,6 +307,7 @@ def add_question(
     question: str,
     required_terms: list[str],
     required_doc_types: list[str],
+    required_evidence_kinds: list[str],
 ) -> None:
     required_terms = [compact(term) for term in required_terms if compact(term)]
     if not required_terms:
@@ -331,15 +321,13 @@ def add_question(
             "required_answer_terms": required_terms,
             "required_any_terms": [],
             "required_source_document_types": required_doc_types,
+            "required_evidence_kinds": required_evidence_kinds,
             "forbidden_answer_terms": [],
         }
     )
 
 
-def make_questions_for_case(
-    case: AdmissionCase,
-    max_terms_per_question: int,
-) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+def make_questions_for_case(case: AdmissionCase, max_terms_per_question: int) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     questions: list[dict[str, str]] = []
     expected: list[dict[str, Any]] = []
     adm = case.admission or {}
@@ -353,6 +341,7 @@ def make_questions_for_case(
             "What discharge location or disposition is documented?",
             [discharge_location],
             ["clinic_note"],
+            ["admission_summary"],
         )
 
     admission_type = compact(adm.get("admission_type"))
@@ -364,6 +353,7 @@ def make_questions_for_case(
             "What admission type is documented?",
             [admission_type],
             ["clinic_note"],
+            ["admission_summary"],
         )
 
     if case.diagnoses:
@@ -374,6 +364,7 @@ def make_questions_for_case(
             "What ICD-coded diagnoses are documented for this admission?",
             case.diagnoses[:max_terms_per_question],
             ["clinic_note"],
+            ["diagnosis_list"],
         )
 
     if case.medications:
@@ -383,6 +374,7 @@ def make_questions_for_case(
             case,
             "What medications are documented for this admission?",
             case.medications[:max_terms_per_question],
+            ["medication_list"],
             ["medication_list"],
         )
 
@@ -394,6 +386,7 @@ def make_questions_for_case(
             "What ICD-coded procedures are documented for this admission?",
             case.procedures[:max_terms_per_question],
             ["operative_report"],
+            ["procedure_list"],
         )
 
     return questions, expected
@@ -416,32 +409,11 @@ def main() -> int:
             "This avoids CSV/text -> PDF -> PDF extraction and isolates checkpoints via --processed-dir."
         )
     )
-    parser.add_argument(
-        "--mimiciv-root",
-        type=Path,
-        default=Path("/media/nishad/Desk SSD/Datasets/mimic/physionet.org/files/mimiciv"),
-    )
-    parser.add_argument(
-        "--mimic-note-root",
-        type=Path,
-        default=Path("/media/nishad/Desk SSD/Datasets/mimic/physionet.org/files/mimic-iv-note"),
-    )
-    parser.add_argument(
-        "--processed-dir",
-        type=Path,
-        default=Path("Data/processed_mimic_iv_pilot"),
-        help="Output directory for documents.jsonl and chunks.jsonl.",
-    )
-    parser.add_argument(
-        "--questions-out",
-        type=Path,
-        default=Path("eval/mimic_iv_pilot_questions.jsonl"),
-    )
-    parser.add_argument(
-        "--expected-out",
-        type=Path,
-        default=Path("eval/mimic_iv_pilot_expected_checks.jsonl"),
-    )
+    parser.add_argument("--mimiciv-root", type=Path, default=Path("/media/nishad/Desk SSD/Datasets/mimic/physionet.org/files/mimiciv"))
+    parser.add_argument("--mimic-note-root", type=Path, default=Path("/media/nishad/Desk SSD/Datasets/mimic/physionet.org/files/mimic-iv-note"))
+    parser.add_argument("--processed-dir", type=Path, default=Path("Data/processed_mimic_iv_pilot"))
+    parser.add_argument("--questions-out", type=Path, default=Path("eval/mimic_iv_pilot_questions.jsonl"))
+    parser.add_argument("--expected-out", type=Path, default=Path("eval/mimic_iv_pilot_expected_checks.jsonl"))
     parser.add_argument("--limit-admissions", type=int, default=10)
     parser.add_argument("--max-questions", type=int, default=25)
     parser.add_argument("--max-diagnoses", type=int, default=5)
@@ -454,10 +426,7 @@ def main() -> int:
 
     if args.processed_dir.exists():
         if not args.force:
-            raise SystemExit(
-                f"Processed directory already exists: {args.processed_dir}\n"
-                "Use --force if you want to overwrite/regenerate it."
-            )
+            raise SystemExit(f"Processed directory already exists: {args.processed_dir}\nUse --force to overwrite/regenerate it.")
         shutil.rmtree(args.processed_dir)
     args.processed_dir.mkdir(parents=True, exist_ok=True)
 
@@ -484,10 +453,8 @@ def main() -> int:
 
     hadm_ids = {case.hadm_id for case in cases}
     admissions = load_admissions(admissions_path, hadm_ids)
-    diag_dict = load_icd_dictionary(d_diagnoses_path)
-    proc_dict = load_icd_dictionary(d_procedures_path)
-    diagnoses = load_diagnoses(diagnoses_path, diag_dict, hadm_ids, args.max_diagnoses)
-    procedures = load_procedures(procedures_path, proc_dict, hadm_ids, args.max_procedures)
+    diagnoses = load_icd_items(diagnoses_path, load_icd_dictionary(d_diagnoses_path), hadm_ids, args.max_diagnoses)
+    procedures = load_icd_items(procedures_path, load_icd_dictionary(d_procedures_path), hadm_ids, args.max_procedures)
     medications = load_medications(prescriptions_path, hadm_ids, args.max_medications)
 
     documents: list[dict[str, Any]] = []
