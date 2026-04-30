@@ -25,6 +25,11 @@ PATIENTS_ROOT = Path(
     )
 )
 
+USE_PATH_HINTS_FOR_DOCUMENT_TYPE = os.getenv(
+    "USE_PATH_HINTS_FOR_DOCUMENT_TYPE",
+    "false",
+).strip().lower() in {"1", "true", "yes", "y", "on"}
+
 LLM_WEIGHTS_DIR = Path(
     os.getenv("LLM_WEIGHTS_DIR", str(Path.home() / "LLM_Weights"))
 )
