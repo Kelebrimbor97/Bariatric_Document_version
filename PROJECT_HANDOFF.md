@@ -720,8 +720,8 @@ The deterministic checker validates expected answer terms, required source docum
 Current synthetic checker baseline:
 
 ```text
-records: 3
-passed: 3
+records: 7
+passed: 7
 failed: 0
 ```
 Important design decision:
@@ -1142,7 +1142,7 @@ Private clean metadata + hybrid retrieval baseline works.
 BM25 is conservatively integrated into /ask.
 The only keyword-only private source was noisy but harmless.
 Synthetic/public-safe bariatric PDF testbed works.
-Synthetic deterministic checker passes 3/3.
+Synthetic deterministic checker covers all 7 synthetic smoke questions and passes 7/7.
 Structured prompt now behaves better for broad "what is documented?" questions.
 ```
 
@@ -1151,16 +1151,24 @@ Current recommendation:
 ```text
 Do not tune BM25 yet.
 Do not add agentic verifier/retry workflows yet.
-Keep the conservative hybrid retrieval and deterministic synthetic checks as the baseline.
+Do not prioritize OpenWebUI polish yet.
+Move next toward metrics-based evaluation using the synthetic/public-safe testbed.
+Use deterministic metrics before changing retrieval behavior.
 ```
 
 Possible next tasks:
 
-1. Expand the synthetic checker from 3 baseline questions to more of the 7 synthetic smoke questions.
-2. Add broader task-level synthetic checks: procedure history, post-op complication, follow-up plan, medication list, missing labs, and mixed evidence.
-3. Improve scripts/test_ehr_retrieval_api.py so JSONL question files can include per-question patient_id.
-4. Consider OpenWebUI prompt/tool polish so retrieval diagnostics are shown only in debug mode.
-5. Later, consider a larger synthetic/public testbed before returning to private bariatric data tuning.
+1. Add metrics-based evaluation for the synthetic testbed:
+   - retrieval hit rate / recall@k for expected source document types
+   - top-rank source quality
+   - MRR-style source ranking metric
+   - structured-answer schema validity
+   - expected answer term coverage
+   - forbidden term / hallucination checks
+2. Add a machine-readable expected-evidence file for the synthetic cases.
+3. Extend `scripts/check_synthetic_smoke_results.py` or add a new `scripts/evaluate_synthetic_results.py` that emits a metrics summary JSON.
+4. Use metrics to compare retrieval configurations before tuning BM25, dense retrieval, reranking, or prompts.
+5. Later, add a larger synthetic/public-safe testbed with more diverse note styles.
 6. Consider branch splitting before PR/merge because the feature branch is now large.
 ---
 
@@ -1241,11 +1249,11 @@ Validated:
 - latest hybrid structured smoke test passed 6/6
 - keyword-only source was inspected and was noisy but harmless
 - synthetic bariatric PDF testbed added
-- deterministic synthetic checker baseline passes 3/3
+- deterministic synthetic checker covers all 7 synthetic smoke questions and passes 7/7
 - structured prompt was tightened to reduce over-answering
 
 Next planned task:
-Expand the synthetic deterministic checker to cover the remaining synthetic smoke questions.
+Build metrics-based evaluation for the synthetic/public-safe testbed. Start with retrieval and structured-answer metrics before tuning BM25, prompts, reranking, or adding agentic workflows.
 ```
 
 ---
@@ -1295,13 +1303,10 @@ start_services.sh
 
 The keyword-only source has already been inspected and was noisy but harmless. The BM25 `/ask` integration should be left alone for now.
 
-Recommended next baby step:
-
-```text
-Expand the synthetic deterministic checker to cover the remaining synthetic smoke questions.
-```
+The synthetic deterministic checker now covers all 7 synthetic smoke questions and passes 7/7.
 
 Current committed synthetic smoke questions:
+
 ```text
 eval/synthetic_bariatric_smoke_questions.jsonl
 ```
@@ -1312,20 +1317,45 @@ Current committed expected-check file:
 eval/synthetic_bariatric_expected_checks.jsonl
 ```
 
-The current checker baseline covers 3 questions and passes 3/3.
-
-Good next checks to add:
+The 7-question synthetic baseline covers:
 
 ```text
 SYN001:
-  What bariatric procedure or surgical history is documented?
-  What vitamin or micronutrient supplementation is documented?
+  procedure history
+  micronutrient monitoring
+  supplementation
 
 SYN002:
-  What bariatric procedure is planned or documented?
+  planned bariatric procedure
+  absent micronutrient monitoring
 
 SYN003:
-  What postoperative complication or follow-up issue is documented?
+  postoperative complication / follow-up issue
+  thiamine and vitamin supplementation
 ```
 
 Avoid overfitting to exact wording. These checks should remain lightweight regression probes, not rigid clinical grading.
+
+Recommended next direction:
+
+```text
+Metrics-based evaluation.
+```
+
+Concrete next baby step:
+
+```text
+Add a metrics evaluator for synthetic results that computes:
+- number of evaluated records
+- pass/fail count
+- expected answer term coverage
+- forbidden term violations
+- required source document_type recall
+- structured_answer validity
+- evidence citation validity
+- retrieval_source distribution
+- top-1 source document_type
+- MRR-like score for required document_type ranking
+```
+
+Do not prioritize OpenWebUI prompt/tool polish yet. Do not add agentic verifier/retry workflows yet. Use metrics first to decide whether retrieval, reranking, prompts, or BM25 need changes.
