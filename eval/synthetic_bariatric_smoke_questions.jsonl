@@ -1,0 +1,7 @@
+{"patient_id": "SYN001", "question": "What bariatric procedure or surgical history is documented?"}
+{"patient_id": "SYN001", "question": "Is there evidence of B12, iron, ferritin, thiamine, vitamin D, calcium, or PTH monitoring?"}
+{"patient_id": "SYN001", "question": "What vitamin or micronutrient supplementation is documented?"}
+{"patient_id": "SYN002", "question": "What bariatric procedure is planned or documented?"}
+{"patient_id": "SYN002", "question": "Is there evidence of micronutrient laboratory monitoring?"}
+{"patient_id": "SYN003", "question": "What postoperative complication or follow-up issue is documented?"}
+{"patient_id": "SYN003", "question": "What thiamine or vitamin supplementation is documented?"}

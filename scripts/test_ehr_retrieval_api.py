@@ -201,7 +201,6 @@ def main() -> int:
 
             print_result(result, show_answer=args.show_answer)
 
-            print_result(result, show_answer=args.show_answer)
     finally:
         if out_f:
             out_f.close()
