@@ -26,6 +26,8 @@ class SourceItem(BaseModel):
     page_num: int | None = None
     chunk_id: str | None = None
     document_type: str | None = None
+    evidence_kind: str | None = None
+    source_table: str | None = None
     section_title: str | None = None
     rerank_score: float | None = None
     retrieval_source: str | None = None
