@@ -5,3 +5,8 @@
 {"patient_id": "SYN002", "question": "Is there evidence of micronutrient laboratory monitoring?"}
 {"patient_id": "SYN003", "question": "What postoperative complication or follow-up issue is documented?"}
 {"patient_id": "SYN003", "question": "What thiamine or vitamin supplementation is documented?"}
+{"patient_id": "SYN001", "question": "Was thiamine measured or ordered?"}
+{"patient_id": "SYN002", "question": "What prior bariatric surgery is documented?"}
+{"patient_id": "SYN002", "question": "What supplementation was recommended preoperatively?"}
+{"patient_id": "SYN003", "question": "Are ferritin, B12, PTH, or vitamin D lab results available after surgery?"}
+{"patient_id": "SYN003", "question": "Was there evidence of a postoperative leak on imaging?"}
