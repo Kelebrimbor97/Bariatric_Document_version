@@ -8,10 +8,11 @@ import json
 import hashlib
 from tqdm import tqdm
 
-from src.config import PATIENTS_ROOT, PROCESSED_DIR
+from src.config import PATIENTS_ROOT, PROCESSED_DIR, USE_PATH_HINTS_FOR_DOCUMENT_TYPE
 from src.path_parser import parse_pdf_path
 from src.pdf_extract import extract_pdf_text
 from src.chunking import chunk_text_with_sections
+from src.document_classifier import classify_document
 
 
 ERRORS_FILE = PROCESSED_DIR / "build_ehr_corpus.errors.jsonl"
@@ -49,11 +50,13 @@ def load_processed_pdfs() -> set[str]:
 
 
 def append_checkpoint(pdf_path: Path) -> None:
+    CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
     with CHECKPOINT_FILE.open("a", encoding="utf-8") as f:
         f.write(str(pdf_path) + "\n")
 
 
 def log_error(pdf_path: Path, error: Exception) -> None:
+    ERRORS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with ERRORS_FILE.open("a", encoding="utf-8") as f:
         f.write(
             json.dumps(
@@ -78,6 +81,7 @@ def main():
 
     print(f"Patients found: {len(patient_dirs)}")
     print(f"Already processed PDFs in checkpoint: {len(processed_pdfs)}")
+    print(f"Use path hints for document_type fallback: {USE_PATH_HINTS_FOR_DOCUMENT_TYPE}")
 
     with documents_out.open("a", encoding="utf-8") as f_doc, \
          chunks_out.open("a", encoding="utf-8") as f_chunk:
@@ -97,10 +101,19 @@ def main():
 
                 try:
                     path_meta = parse_pdf_path(pdf_path, patient_dir)
+                    path_document_type = path_meta.pop("document_type", "unknown")
                     pages = extract_pdf_text(pdf_path)
                     full_text = "\n\n".join(
                         p["text"] for p in pages if p["text"].strip()
                     )
+                    classification = classify_document(
+                        file_name=pdf_path.name,
+                        text=full_text,
+                        path_document_type=path_document_type,
+                        path_tags=path_meta.get("path_tags"),
+                        use_path_hints=USE_PATH_HINTS_FOR_DOCUMENT_TYPE,
+                    )
+                    classification_meta = classification.to_metadata()
 
                     doc_record = {
                         "patient_id": patient_uid,
@@ -108,6 +121,8 @@ def main():
                         "patient_folder_name": patient_folder_name,
                         "pdf_path": pdf_path_str,
                         **path_meta,
+                        **classification_meta,
+                        "path_document_type_hint": path_document_type,
                         "n_pages": len(pages),
                         "raw_text": full_text,
                     }
@@ -124,6 +139,8 @@ def main():
                                 "patient_folder_name": patient_folder_name,
                                 "pdf_path": pdf_path_str,
                                 **path_meta,
+                                **classification_meta,
+                                "path_document_type_hint": path_document_type,
                                 "page_num": page["page_num"],
                                 "section_title": section_title,
                                 "section_chunk_index": ch.get("section_chunk_index"),
