@@ -43,6 +43,17 @@ def load_json_or_jsonl(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def load_chunks_by_id(path: Path | None) -> dict[str, dict[str, Any]] | None:
+    if path is None:
+        return None
+    chunks: dict[str, dict[str, Any]] = {}
+    for record in load_json_or_jsonl(path):
+        chunk_id = record.get("chunk_id")
+        if chunk_id:
+            chunks[str(chunk_id)] = record
+    return chunks
+
+
 def unwrap_result(record: dict[str, Any]) -> dict[str, Any]:
     if isinstance(record.get("result"), dict):
         merged = dict(record["result"])
@@ -166,7 +177,90 @@ def matched_values_from_sources(actual: dict[str, Any], field_name: str, require
     return [value for value in required_values if value in source_values]
 
 
-def evaluate_record(expected: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
+def retrieved_evidence_term_debug(
+    actual: dict[str, Any],
+    missing_terms: list[str],
+    chunks_by_id: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Check whether answer terms missed by the model were visible in retrieved source text.
+
+    This is diagnostic only. It does not affect pass/fail scoring.
+    """
+    if chunks_by_id is None:
+        return None
+
+    sources = actual.get("sources") or []
+    if not isinstance(sources, list):
+        sources = []
+
+    retrieved_chunks: list[dict[str, Any]] = []
+    unresolved_chunk_ids: list[str] = []
+
+    for rank, source in enumerate(sources, start=1):
+        if not isinstance(source, dict):
+            continue
+        chunk_id = source.get("chunk_id")
+        if not chunk_id:
+            continue
+        chunk = chunks_by_id.get(str(chunk_id))
+        if not chunk:
+            unresolved_chunk_ids.append(str(chunk_id))
+            continue
+        retrieved_chunks.append(
+            {
+                "rank": rank,
+                "chunk_id": str(chunk_id),
+                "document_type": source.get("document_type") or chunk.get("document_type"),
+                "evidence_kind": source.get("evidence_kind") or chunk.get("evidence_kind"),
+                "source_table": source.get("source_table") or chunk.get("source_table"),
+                "text": str(chunk.get("chunk_text") or ""),
+            }
+        )
+
+    present_terms: list[str] = []
+    absent_terms: list[str] = []
+    first_source_rank: dict[str, int] = {}
+    source_hits: dict[str, list[dict[str, Any]]] = {}
+
+    for term in missing_terms:
+        needle = normalize_text(term)
+        hits = []
+        for chunk in retrieved_chunks:
+            if needle and needle in normalize_text(chunk["text"]):
+                hits.append(
+                    {
+                        "rank": chunk["rank"],
+                        "chunk_id": chunk["chunk_id"],
+                        "document_type": chunk.get("document_type"),
+                        "evidence_kind": chunk.get("evidence_kind"),
+                        "source_table": chunk.get("source_table"),
+                    }
+                )
+        if hits:
+            present_terms.append(term)
+            first_source_rank[term] = hits[0]["rank"]
+            source_hits[term] = hits
+        else:
+            absent_terms.append(term)
+
+    return {
+        "enabled": True,
+        "retrieved_sources": len(sources),
+        "retrieved_chunks_resolved": len(retrieved_chunks),
+        "retrieved_chunks_unresolved": len(unresolved_chunk_ids),
+        "unresolved_chunk_ids": unresolved_chunk_ids[:20],
+        "missing_terms_present_in_retrieved_evidence": present_terms,
+        "missing_terms_absent_from_retrieved_evidence": absent_terms,
+        "missing_term_first_source_rank": first_source_rank,
+        "missing_term_source_hits": source_hits,
+    }
+
+
+def evaluate_record(
+    expected: dict[str, Any],
+    actual: dict[str, Any],
+    chunks_by_id: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     answer_text = flatten_answer_text(actual)
     sources = actual.get("sources") or []
     if not isinstance(sources, list):
@@ -220,7 +314,9 @@ def evaluate_record(expected: dict[str, Any], actual: dict[str, Any]) -> dict[st
     failures.extend(structured_failures)
     failures.extend(citation_failures)
 
-    return {
+    evidence_debug = retrieved_evidence_term_debug(actual, missing_required_terms, chunks_by_id)
+
+    record = {
         "patient_id": expected.get("patient_id"),
         "question": expected.get("question"),
         "passed": not failures,
@@ -246,6 +342,9 @@ def evaluate_record(expected: dict[str, Any], actual: dict[str, Any]) -> dict[st
         "status_counts": dict(status_counts),
         "source_count": len(sources),
     }
+    if evidence_debug is not None:
+        record["answer_term_evidence_debug"] = evidence_debug
+    return record
 
 
 def build_summary(
@@ -255,6 +354,7 @@ def build_summary(
     per_record: list[dict[str, Any]],
     missing_result_keys: list[tuple[str | None, str | None]],
     extra_result_keys: list[tuple[str | None, str | None]],
+    chunks_debug_enabled: bool = False,
 ) -> dict[str, Any]:
     evaluated = len(per_record)
     passed = sum(1 for rec in per_record if rec["passed"])
@@ -312,7 +412,7 @@ def build_summary(
     for patient_id, question in missing_result_keys:
         failures.append({"patient_id": patient_id, "question": question, "failures": ["matching result not found"]})
 
-    return {
+    summary = {
         "input_counts": {"questions": len(questions), "expected_records": len(expected_records), "actual_records": len(actual_records), "missing_results": len(missing_result_keys), "extra_results": len(extra_result_keys)},
         "records": evaluated + len(missing_result_keys),
         "evaluated_records": evaluated,
@@ -340,18 +440,44 @@ def build_summary(
         "per_record": per_record,
     }
 
+    if chunks_debug_enabled:
+        debug_records = [rec.get("answer_term_evidence_debug") for rec in per_record if rec.get("answer_term_evidence_debug")]
+        missing_terms_total = sum(len(rec["required_terms"]["missing"]) for rec in per_record)
+        present = sum(len(debug.get("missing_terms_present_in_retrieved_evidence", [])) for debug in debug_records)
+        absent = sum(len(debug.get("missing_terms_absent_from_retrieved_evidence", [])) for debug in debug_records)
+        unresolved_chunks = sum(debug.get("retrieved_chunks_unresolved", 0) for debug in debug_records)
+        summary["missing_answer_term_evidence_visibility"] = {
+            "enabled": True,
+            "missing_answer_terms_total": missing_terms_total,
+            "present_in_retrieved_evidence": present,
+            "absent_from_retrieved_evidence": absent,
+            "present_rate": safe_div(present, missing_terms_total),
+            "absent_rate": safe_div(absent, missing_terms_total),
+            "unresolved_retrieved_chunks": unresolved_chunks,
+        }
+
+    return summary
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compute metrics for EHR RAG /ask outputs.")
     parser.add_argument("--questions", type=Path, default=Path("eval/synthetic_bariatric_smoke_questions.jsonl"))
     parser.add_argument("--expected", type=Path, default=Path("eval/synthetic_bariatric_expected_checks.jsonl"))
     parser.add_argument("--results", type=Path, nargs="+", required=True)
+    parser.add_argument(
+        "--chunks",
+        type=Path,
+        default=None,
+        help="Optional chunks.jsonl file. When provided, missing answer terms are checked against retrieved chunk text by chunk_id.",
+    )
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--fail-on-failed", action="store_true")
     args = parser.parse_args()
 
     questions = load_json_or_jsonl(args.questions) if args.questions.exists() else []
     expected_records = load_json_or_jsonl(args.expected)
+    chunks_by_id = load_chunks_by_id(args.chunks)
+
     actual_records: list[dict[str, Any]] = []
     for result_file in args.results:
         for record in load_json_or_jsonl(result_file):
@@ -368,9 +494,17 @@ def main() -> int:
     for expected in expected_records:
         actual = actual_by_key.get(result_key(expected))
         if actual is not None:
-            per_record.append(evaluate_record(expected, actual))
+            per_record.append(evaluate_record(expected, actual, chunks_by_id=chunks_by_id))
 
-    summary = build_summary(questions, expected_records, actual_records, per_record, missing_result_keys, extra_result_keys)
+    summary = build_summary(
+        questions,
+        expected_records,
+        actual_records,
+        per_record,
+        missing_result_keys,
+        extra_result_keys,
+        chunks_debug_enabled=chunks_by_id is not None,
+    )
     summary_json = json.dumps(summary, indent=2, ensure_ascii=False)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
