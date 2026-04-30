@@ -259,6 +259,8 @@ def answer_question(patient_id: str | None, question: str, structured: bool = Fa
         evidence_blocks.append(
             f"[{i}] rerank_score={rr_score:.4f} "
             f"document_type={p.get('document_type', 'unknown')} "
+            f"evidence_kind={p.get('evidence_kind')} "
+            f"source_table={p.get('source_table')} "
             f"section={p.get('section_title')} "
             f"path={p.get('relative_path')} "
             f"page={p.get('page_num')}\n"
@@ -270,6 +272,8 @@ def answer_question(patient_id: str | None, question: str, structured: bool = Fa
                 "page_num": p.get("page_num"),
                 "chunk_id": p.get("chunk_id"),
                 "document_type": p.get("document_type"),
+                "evidence_kind": p.get("evidence_kind"),
+                "source_table": p.get("source_table"),
                 "section_title": p.get("section_title"),
                 "rerank_score": rr_score,
                 "retrieval_source": p.get("retrieval_source"),
