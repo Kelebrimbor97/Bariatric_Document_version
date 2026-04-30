@@ -112,6 +112,11 @@ def main() -> int:
         help="Optional text or JSONL file. Each line is either a plain question or {'question': ...}.",
     )
     parser.add_argument("--out", default=None, help="Optional JSONL output path")
+    parser.add_argument(
+        "--report-out",
+        default=None,
+        help="Optional Markdown report path with readable answers, structured output, retrieval plan, and sources.",
+    )
     parser.add_argument("--show-answer", action="store_true", help="Print full answer text")
     parser.add_argument("--structured", action="store_true", help="Request structured JSON answer mode")
     args = parser.parse_args()
@@ -126,6 +131,12 @@ def main() -> int:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_f = out_path.open("w", encoding="utf-8")
+
+    report_f = None
+    if args.report_out:
+        report_path = Path(args.report_out)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_f = report_path.open("w", encoding="utf-8")
 
     try:
         for idx, question in enumerate(questions, start=1):
@@ -151,10 +162,51 @@ def main() -> int:
                 out_f.write(json.dumps(result_record, ensure_ascii=False) + "\n")
                 out_f.flush()
 
+            if report_f:
+                report_f.write("\n\n" + "#" * 88 + "\n")
+                report_f.write(f"# QUESTION {idx}/{len(questions)}\n")
+                report_f.write("#" * 88 + "\n\n")
+                report_f.write(f"Patient ID: {args.patient_id}\n\n")
+                report_f.write(f"Structured: {args.structured}\n\n")
+                report_f.write("## Question\n\n")
+                report_f.write(question + "\n\n")
+
+                report_f.write("## Answer\n\n")
+                report_f.write(str(result.get("answer", "")) + "\n\n")
+
+                structured_answer = result.get("structured_answer")
+                if structured_answer is not None:
+                    report_f.write("## Structured Answer\n\n")
+                    report_f.write("```json\n")
+                    report_f.write(json.dumps(structured_answer, indent=2, ensure_ascii=False))
+                    report_f.write("\n```\n\n")
+
+                report_f.write("## Retrieval Plan\n\n")
+                report_f.write("```json\n")
+                report_f.write(json.dumps(result.get("retrieval_plan"), indent=2, ensure_ascii=False))
+                report_f.write("\n```\n\n")
+
+                report_f.write("## Sources\n\n")
+                for source_idx, source in enumerate(result.get("sources") or [], start=1):
+                    report_f.write(f"### Source {source_idx}\n\n")
+                    report_f.write(f"- retrieval_source: `{source.get('retrieval_source')}`\n")
+                    report_f.write(f"- document_type: `{source.get('document_type')}`\n")
+                    report_f.write(f"- section_title: `{source.get('section_title')}`\n")
+                    report_f.write(f"- rerank_score: `{source.get('rerank_score')}`\n")
+                    report_f.write(f"- page_num: `{source.get('page_num')}`\n")
+                    report_f.write(f"- relative_path: `{source.get('relative_path')}`\n")
+                    report_f.write(f"- chunk_id: `{source.get('chunk_id')}`\n\n")
+
+                report_f.flush()
+
+            print_result(result, show_answer=args.show_answer)
+
             print_result(result, show_answer=args.show_answer)
     finally:
         if out_f:
             out_f.close()
+        if report_f:
+            report_f.close()
 
     return 0
 
