@@ -647,15 +647,19 @@ File:
 
 ```text
 scripts/inspect_retrieval_sources.py
+```
+
 Added a helper script to inspect final /ask sources by retrieval_source.
 This was used to inspect the single keyword-only source from the hybrid smoke test. The source was:
 
+```text
 record: 5
 source rank: 7
 question: Is there evidence of B12, iron, ferritin, thiamine, vitamin D, calcium, or PTH monitoring?
 document_type: clinic_note
 section_title: None
 rerank_score: -11.4140
+```
 
 The chunk was mostly boilerplate/admin text from a nutrition clinic note and did not contain the requested micronutrient/lab terms.
 
@@ -664,7 +668,9 @@ Conclusion:
 The single keyword-only survivor was noisy, but harmless.
 BM25 is functioning as conservative recall support.
 Do not tune BM25 yet based on this one noisy hit.
-```
+
+---
+
 ### 5.16 Synthetic/public-safe bariatric testbed
 
 Files:
@@ -714,9 +720,9 @@ The deterministic checker validates expected answer terms, required source docum
 Current synthetic checker baseline:
 
 ```text
-The deterministic checker validates expected answer terms, required source document types, forbidden answer terms, and basic structured-answer shape.
-
-Current synthetic checker baseline:
+records: 3
+passed: 3
+failed: 0
 ```
 Important design decision:
 
@@ -821,12 +827,26 @@ python scripts/check_structured_smoke_results.py   Data/processed/ehr_retrieval_
 
 ### Keyword retrieval smoke test
 
+```bash
+python scripts/test_keyword_retrieval.py   --patient-id 021494762   --limit 8
+```
+
+Specific keyword query:
+
+```bash
+python scripts/test_keyword_retrieval.py   --patient-id 021494762   --query "B12 ferritin iron thiamine vitamin D calcium PTH"   --limit 10
+```
+With document-type filter:
+
+```bash
+python scripts/test_keyword_retrieval.py   --patient-id 021494762   --query "multivitamin calcium citrate vitamin D B12 iron thiamine"   --document-types nutrition_note,clinic_note,discharge_summary,medication_list   --limit 10
+```
+
 ### Synthetic bariatric testbed generation
 
 ```bash
 python scripts/create_synthetic_bariatric_testbed.py --force
 ```
-
 Build/index into a separate synthetic Qdrant collection:
 
 ```bash
@@ -834,11 +854,13 @@ PATIENTS_ROOT="$PWD/Data/public_testbed/synthetic_bariatric_pdf/Test Patients" \
 COLLECTION_NAME=ehr_chunks_synth_v1 \
 ./run_build.sh
 ```
+
 Restart APIs against the synthetic collection:
 
 ```bash
 COLLECTION_NAME=ehr_chunks_synth_v1 ./restart_services.sh
 ```
+
 Run the three deterministic synthetic baseline questions:
 
 ```bash
@@ -880,22 +902,6 @@ Expected result:
 records: 3
 passed: 3
 failed: 0
-```
-
-```bash
-python scripts/test_keyword_retrieval.py   --patient-id 021494762   --limit 8
-```
-
-Specific keyword query:
-
-```bash
-python scripts/test_keyword_retrieval.py   --patient-id 021494762   --query "B12 ferritin iron thiamine vitamin D calcium PTH"   --limit 10
-```
-
-With document-type filter:
-
-```bash
-python scripts/test_keyword_retrieval.py   --patient-id 021494762   --query "multivitamin calcium citrate vitamin D B12 iron thiamine"   --document-types nutrition_note,clinic_note,discharge_summary,medication_list   --limit 10
 ```
 
 ---
@@ -1129,8 +1135,6 @@ Do not spend too much time on perfect section detection or overly strict structu
 
 ## 10. Recommended next step
 
-## 10. Recommended next step
-
 The current stable baseline is:
 
 ```text
@@ -1233,12 +1237,15 @@ Validated:
 - section false positives were reduced
 - structured=true returned parseable JSON
 - standalone BM25 keyword retrieval returned hits=8 for default queries
-- BM25 is now wired into `/ask` conservatively
+- BM25 is wired into `/ask` conservatively
 - latest hybrid structured smoke test passed 6/6
-- retrieval_source counts were both=25, dense=22, keyword=1, missing=0
+- keyword-only source was inspected and was noisy but harmless
+- synthetic bariatric PDF testbed added
+- deterministic synthetic checker baseline passes 3/3
+- structured prompt was tightened to reduce over-answering
 
 Next planned task:
-preserve the known-good hybrid retrieval state, inspect the keyword-only source, and avoid retrieval tuning unless the keyword-only hit looks noisy.
+Expand the synthetic deterministic checker to cover the remaining synthetic smoke questions.
 ```
 
 ---
@@ -1250,10 +1257,15 @@ Verified file list from branch diff against `main`:
 ```text
 api_ehr_rag.py
 eval/ehr_retrieval_smoke_questions.jsonl
+eval/synthetic_bariatric_expected_checks.jsonl
+eval/synthetic_bariatric_smoke_questions.jsonl
 run_build.sh
 scripts/build_ehr_corpus.py
 scripts/check_structured_smoke_results.py
+scripts/check_synthetic_smoke_results.py
+scripts/create_synthetic_bariatric_testbed.py
 scripts/index_qdrant_medcpt.py
+scripts/inspect_retrieval_sources.py
 scripts/test_ehr_retrieval_api.py
 scripts/test_keyword_retrieval.py
 src/chunking.py
