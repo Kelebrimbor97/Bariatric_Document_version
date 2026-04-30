@@ -10,3 +10,6 @@ logs/
 speech/
 tts_proxy.py
 *pycache*
+
+# scratchpad
+scratch_pad.txt
