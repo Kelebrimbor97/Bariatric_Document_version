@@ -48,7 +48,10 @@ Rules:
 - If status is not_found, evidence MUST be [] even if retrieved evidence was reviewed to determine absence.
 - Use uncertain when evidence is conflicting, vague, or incomplete.
 - Do not invent diagnoses, procedures, dates, medications, labs, recommendations, or source details.
-- If a requested item is missing, put it in missing_information.
+- Only create findings for items directly requested by the question or clearly necessary to answer it.
+- Do not add extra not_found findings for unrelated labs, vitamins, diagnoses, or medications.
+- Only put items in missing_information if the user explicitly requested them and they are absent from the evidence.
+- For broad "what is documented" questions, do not list unrelated absent items in missing_information.
 - Keep rationale concise and evidence-tied.
 
 Retrieval plan:
