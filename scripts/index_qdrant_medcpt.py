@@ -31,6 +31,7 @@ def load_checkpoint() -> int:
 
 
 def save_checkpoint(idx: int) -> None:
+    CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
     CHECKPOINT_FILE.write_text(str(idx), encoding="utf-8")
 
 
@@ -101,6 +102,8 @@ def main():
                     "file_name": r["file_name"],
                     "path_tags": r["path_tags"],
                     "document_type": r.get("document_type", "unknown"),
+                    "evidence_kind": r.get("evidence_kind"),
+                    "source_table": r.get("source_table"),
                     "section_title": r.get("section_title"),
                     "section_chunk_index": r.get("section_chunk_index"),
                     "page_num": r["page_num"],
