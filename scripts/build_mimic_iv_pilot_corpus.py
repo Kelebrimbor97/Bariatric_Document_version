@@ -5,6 +5,7 @@ import argparse
 import csv
 import gzip
 import json
+import re
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -35,6 +36,7 @@ class AdmissionCase:
     diagnoses: list[str] = field(default_factory=list)
     procedures: list[str] = field(default_factory=list)
     medications: list[str] = field(default_factory=list)
+    radiology_reports: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def patient_id(self) -> str:
@@ -153,6 +155,44 @@ def load_medications(path: Path, hadm_ids: set[str], max_per_admission: int) -> 
     return {k: unique_preserve_order(v) for k, v in out.items()}
 
 
+def load_radiology_reports(
+    path: Path,
+    hadm_ids: set[str],
+    max_per_admission: int,
+    min_text_chars: int,
+) -> dict[str, list[dict[str, str]]]:
+    """Load a small number of MIMIC-IV-Note radiology reports per admission.
+
+    Radiology is intentionally opt-in for the pilot so the existing direct MIMIC
+    baseline remains reproducible unless --include-radiology is used.
+    """
+    out: dict[str, list[dict[str, str]]] = {hadm_id: [] for hadm_id in hadm_ids}
+    for row in read_csv_gz(path):
+        hadm_id = compact(row.get("hadm_id"))
+        if hadm_id not in hadm_ids:
+            continue
+        if len(out[hadm_id]) >= max_per_admission:
+            continue
+
+        text = str(row.get("text") or "").strip()
+        if len(text) < min_text_chars:
+            continue
+
+        out[hadm_id].append(
+            {
+                "note_id": compact(row.get("note_id")) or f"radiology_{hadm_id}_{len(out[hadm_id]) + 1}",
+                "subject_id": compact(row.get("subject_id")),
+                "hadm_id": hadm_id,
+                "note_type": compact(row.get("note_type")),
+                "note_seq": compact(row.get("note_seq")),
+                "charttime": compact(row.get("charttime")),
+                "storetime": compact(row.get("storetime")),
+                "text": text,
+            }
+        )
+    return out
+
+
 def document_meta(
     case: AdmissionCase,
     relative_path: str,
@@ -184,8 +224,8 @@ def chunk_direct_text(text: str, evidence_kind: str) -> tuple[str, list[dict[str
     """Chunk generated direct-text documents.
 
     Compact structured list documents are kept atomic so the full list is visible
-    when that source is retrieved. Long discharge summaries still use the normal
-    section-aware chunker.
+    when that source is retrieved. Long discharge summaries and radiology reports
+    use the normal section-aware chunker.
     """
     if evidence_kind in ATOMIC_EVIDENCE_KINDS:
         return "atomic", [
@@ -268,6 +308,27 @@ def list_text(title: str, hadm_id: str, items: list[str], empty_message: str) ->
     return "\n".join(lines)
 
 
+def safe_file_token(value: str) -> str:
+    token = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in compact(value))
+    return token or "unknown"
+
+
+def radiology_report_text(case: AdmissionCase, report: dict[str, str]) -> str:
+    lines = [
+        "Radiology Report",
+        f"Subject ID: {case.subject_id}",
+        f"Hospital admission ID: {case.hadm_id}",
+        f"Radiology note ID: {compact(report.get('note_id')) or 'not available'}",
+        f"Note type: {compact(report.get('note_type')) or 'not available'}",
+        f"Note sequence: {compact(report.get('note_seq')) or 'not available'}",
+        f"Chart time: {compact(report.get('charttime')) or 'not available'}",
+        f"Store time: {compact(report.get('storetime')) or 'not available'}",
+        "",
+        str(report.get("text") or "").strip(),
+    ]
+    return "\n".join(lines)
+
+
 def add_case_documents(documents: list[dict[str, Any]], chunks: list[dict[str, Any]], case: AdmissionCase) -> None:
     add_document(
         documents,
@@ -335,6 +396,19 @@ def add_case_documents(documents: list[dict[str, Any]], chunks: list[dict[str, A
         ),
     )
 
+    for idx, report in enumerate(case.radiology_reports, start=1):
+        note_id = safe_file_token(report.get("note_id") or f"radiology_{idx}")
+        add_document(
+            documents,
+            chunks,
+            case,
+            relative_path=f"Clinical Documents/Radiology/radiology_{idx:02d}_{note_id}.txt",
+            document_type="radiology",
+            evidence_kind="radiology_report",
+            source_table="radiology",
+            text=radiology_report_text(case, report),
+        )
+
 
 def add_question(
     questions: list[dict[str, str]],
@@ -361,6 +435,61 @@ def add_question(
             "forbidden_answer_terms": [],
         }
     )
+
+
+def split_radiology_sections(text: str) -> dict[str, str]:
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+
+    header_re = re.compile(r"^\s*([A-Z][A-Z /_-]{2,40})\s*:?\s*(.*)$")
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        match = header_re.match(line)
+        if match:
+            header = compact(match.group(1)).lower()
+            rest = compact(match.group(2))
+            current = header
+            sections.setdefault(current, [])
+            if rest:
+                sections[current].append(rest)
+            continue
+        if current:
+            sections[current].append(line)
+
+    return {key: "\n".join(value).strip() for key, value in sections.items() if "\n".join(value).strip()}
+
+
+def select_radiology_expected_terms(report: dict[str, str], max_terms: int) -> list[str]:
+    """Pick short answer-check terms from impression/findings text.
+
+    This is only for deterministic pilot checks. It intentionally favors exact
+    phrases visible in the report over a rigid radiology schema.
+    """
+    text = str(report.get("text") or "")
+    sections = split_radiology_sections(text)
+    preferred_text = ""
+    for section_name in ("impression", "conclusion", "findings"):
+        if sections.get(section_name):
+            preferred_text = sections[section_name]
+            break
+    if not preferred_text:
+        preferred_text = text
+
+    fragments: list[str] = []
+    for fragment in re.split(r"[.;\n]+", preferred_text):
+        fragment = compact(re.sub(r"^\s*\d+\.?\s*", "", fragment))
+        if not fragment:
+            continue
+        lower = fragment.lower()
+        if lower in {"impression", "findings", "conclusion", "exam", "history", "indication", "comparison", "technique"}:
+            continue
+        if len(fragment) < 4 or len(fragment) > 100:
+            continue
+        if not re.search(r"[A-Za-z]{4}", fragment):
+            continue
+        fragments.append(fragment)
+
+    return unique_preserve_order(fragments)[:max_terms]
 
 
 def make_questions_for_case(case: AdmissionCase, max_terms_per_question: int) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
@@ -425,6 +554,19 @@ def make_questions_for_case(case: AdmissionCase, max_terms_per_question: int) ->
             ["procedure_list"],
         )
 
+    if case.radiology_reports:
+        radiology_terms = select_radiology_expected_terms(case.radiology_reports[0], max_terms_per_question)
+        if radiology_terms:
+            add_question(
+                questions,
+                expected,
+                case,
+                "What radiology findings or impression are documented for this admission?",
+                radiology_terms,
+                ["radiology"],
+                ["radiology_report"],
+            )
+
     return questions, expected
 
 
@@ -457,6 +599,9 @@ def main() -> int:
     parser.add_argument("--max-medications", type=int, default=8)
     parser.add_argument("--max-terms-per-question", type=int, default=2)
     parser.add_argument("--min-discharge-text-chars", type=int, default=1000)
+    parser.add_argument("--include-radiology", action="store_true", help="Also ingest MIMIC-IV-Note radiology.csv.gz reports for selected admissions.")
+    parser.add_argument("--max-radiology-reports", type=int, default=2, help="Maximum radiology reports to add per selected admission when --include-radiology is used.")
+    parser.add_argument("--min-radiology-text-chars", type=int, default=80, help="Minimum radiology report text length to include.")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
@@ -472,6 +617,7 @@ def main() -> int:
                 path.unlink()
 
     discharge_path = find_file(args.mimic_note_root, "discharge.csv.gz")
+    radiology_path = find_file(args.mimic_note_root, "radiology.csv.gz") if args.include_radiology else None
     admissions_path = find_file(args.mimiciv_root, "admissions.csv.gz")
     diagnoses_path = find_file(args.mimiciv_root, "diagnoses_icd.csv.gz")
     d_diagnoses_path = find_file(args.mimiciv_root, "d_icd_diagnoses.csv.gz")
@@ -480,6 +626,8 @@ def main() -> int:
     prescriptions_path = find_file(args.mimiciv_root, "prescriptions.csv.gz")
 
     print(f"Using discharge notes: {discharge_path}")
+    if radiology_path:
+        print(f"Using radiology notes: {radiology_path}")
     print(f"Using MIMIC-IV admissions: {admissions_path}")
     print(f"Writing processed corpus to: {args.processed_dir}")
 
@@ -492,6 +640,16 @@ def main() -> int:
     diagnoses = load_icd_items(diagnoses_path, load_icd_dictionary(d_diagnoses_path), hadm_ids, args.max_diagnoses)
     procedures = load_icd_items(procedures_path, load_icd_dictionary(d_procedures_path), hadm_ids, args.max_procedures)
     medications = load_medications(prescriptions_path, hadm_ids, args.max_medications)
+    radiology_reports = (
+        load_radiology_reports(
+            radiology_path,
+            hadm_ids,
+            args.max_radiology_reports,
+            args.min_radiology_text_chars,
+        )
+        if radiology_path
+        else {hadm_id: [] for hadm_id in hadm_ids}
+    )
 
     documents: list[dict[str, Any]] = []
     chunks: list[dict[str, Any]] = []
@@ -503,6 +661,7 @@ def main() -> int:
         case.diagnoses = diagnoses.get(case.hadm_id, [])
         case.procedures = procedures.get(case.hadm_id, [])
         case.medications = medications.get(case.hadm_id, [])
+        case.radiology_reports = radiology_reports.get(case.hadm_id, [])
         add_case_documents(documents, chunks, case)
 
         questions, expected = make_questions_for_case(case, args.max_terms_per_question)
