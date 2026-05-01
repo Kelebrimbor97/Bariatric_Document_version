@@ -97,8 +97,7 @@ flowchart TD
     A[Patient PDF folders] --> B[build_ehr_corpus.py]
     B --> C[pypdf text extraction]
     C --> D[path_parser.py]
-    D --> D1[document_type]
-    D --> D2[path metadata]
+    D --> D2[path metadata/path hints]
     C --> E[section-aware chunking]
     E --> F[documents.jsonl]
     E --> G[chunks.jsonl]
@@ -332,12 +331,10 @@ The structured answer is useful for evaluation and downstream UI/API workflows, 
 
 ## 6. Current coverage
 
-```text
 | Benchmark | Scope | Result |
 |---|---|---:|
 | Synthetic bariatric PDFs | PDF ingestion, document classification, retrieval, structured answers, citation validity | 12/12 |
 | MIMIC-IV direct pilot v4 | admissions, discharge, diagnoses, procedures, prescriptions | 25/25 |
-```
 
 Validated synthetic document types:
 
@@ -467,7 +464,8 @@ Synthetic 12-question benchmark:
 MIMIC-IV pilot:
   retrieval recall is good
   evidence_kind recall is good
-  answer extraction/copying is still weak for list-style questions
+  v3 failure was evidence visibility/chunking, not LLM copying.
+  Atomic structured chunks fixed MIMIC direct pilot from 14/25 to 25/25.
 ```
 
 ---
@@ -580,7 +578,7 @@ For MIMIC or structured benchmark data, generating PDFs is unnecessary and ineff
 Use `PROCESSED_DIR` to avoid checkpoint contamination across corpora:
 
 ```bash
-PROCESSED_DIR="$PWD/Data/processed_mimic_iv_pilot" \
+PROCESSED_DIR="$PWD/Data/processed_mimic_iv_pilot_v4" \
 COLLECTION_NAME=ehr_chunks_mimic_iv_pilot_v2 \
 python scripts/index_qdrant_medcpt.py
 ```
@@ -595,23 +593,23 @@ Build the direct MIMIC-IV pilot corpus:
 python scripts/build_mimic_iv_pilot_corpus.py \
   --limit-admissions 10 \
   --max-questions 25 \
-  --processed-dir Data/processed_mimic_iv_pilot \
+  --processed-dir Data/processed_mimic_iv_pilot_v4 \
   --force
 ```
 
 Index into Qdrant:
 
 ```bash
-PROCESSED_DIR="$PWD/Data/processed_mimic_iv_pilot" \
-COLLECTION_NAME=ehr_chunks_mimic_iv_pilot_v2 \
+PROCESSED_DIR="$PWD/Data/processed_mimic_iv_pilot_v4" \
+COLLECTION_NAME=ehr_chunks_mimic_iv_pilot_v4 \
 python scripts/index_qdrant_medcpt.py
 ```
 
 Restart the EHR RAG API with matching environment:
 
 ```bash
-PROCESSED_DIR="$PWD/Data/processed_mimic_iv_pilot" \
-COLLECTION_NAME=ehr_chunks_mimic_iv_pilot_v2 \
+PROCESSED_DIR="$PWD/Data/processed_mimic_iv_pilot_v4" \
+COLLECTION_NAME=ehr_chunks_mimic_iv_pilot_v4 \
 ./restart_services.sh
 ```
 

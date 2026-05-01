@@ -798,10 +798,10 @@ The deterministic checker validates expected answer terms, required source docum
 Current synthetic checker baseline:
 
 ```text
-records: 7
-passed: 7
-failed: 0
+Synthetic bariatric PDF classifier benchmark: 12/12
+MIMIC-IV direct pilot v4: 25/25
 ```
+
 Important design decision:
 
 ```text
@@ -1339,8 +1339,6 @@ Important: ask me before referring to or modifying the repo unless I explicitly 
 ---
 
 ### Update the “Suggested prompt for a new chat” block
-
-Replace its “Current branch already has” and “Validated” portions with:
 
 ```text
 Current branch already has:
