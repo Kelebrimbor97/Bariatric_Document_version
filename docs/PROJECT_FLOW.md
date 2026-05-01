@@ -96,13 +96,16 @@ synthetic bariatric PDF testbed
 flowchart TD
     A[Patient PDF folders] --> B[build_ehr_corpus.py]
     B --> C[pypdf text extraction]
-    C --> D[path_parser.py]
-    D --> D2[path metadata/path hints]
-    C --> E[section-aware chunking]
-    E --> F[documents.jsonl]
-    E --> G[chunks.jsonl]
-    G --> H[index_qdrant_medcpt.py]
-    H --> I[Qdrant collection]
+    B --> D[path_parser.py]
+    D --> D1[path metadata / path hints]
+    C --> E[document_classifier.py]
+    D1 --> E
+    E --> E1[final document_type + classification diagnostics]
+    C --> F[section-aware chunking]
+    E1 --> G[documents.jsonl]
+    F --> H[chunks.jsonl]
+    H --> I[index_qdrant_medcpt.py]
+    I --> J[Qdrant collection]
 ```
 
 This remains important because the original project target is messy local clinical PDFs.
@@ -184,9 +187,12 @@ A chunk should increasingly look like this conceptually:
 {
   "patient_id": "MIMICIV_10000032_22595853",
   "document_type": "clinic_note",
+  "document_type_source": "explicit_metadata",
+  "document_type_confidence": 1.0,
   "evidence_kind": "diagnosis_list",
   "source_table": "diagnoses_icd",
   "section_title": null,
+  "chunking_strategy": "atomic",
   "chunk_text": "Coded Diagnoses\n1. Portal hypertension\n2. Other ascites..."
 }
 ```
@@ -204,6 +210,11 @@ evidence_kind
 source_table
 chunk_id
 chunk_text
+document_type_source
+document_type_confidence
+document_type_signals
+path_document_type_hint
+chunking_strategy
 ```
 
 Conceptual distinction:
@@ -477,20 +488,22 @@ flowchart TD
     A[Run benchmark] --> B[Inspect metrics]
     B --> C{What failed?}
 
-    C -- Answer terms missing but evidence_kind present --> D[Fix prompt / extraction]
-    C -- evidence_kind missing --> E[Fix retrieval planner / ranking]
-    C -- citations invalid --> F[Fix structured answer citation rules]
-    C -- structured JSON invalid --> G[Fix JSON prompt/parser]
-    C -- forbidden terms present --> H[Fix over-answering / hallucination guardrails]
+    C -- Answer terms missing and absent from retrieved evidence --> D[Fix chunking / evidence visibility]
+    C -- Answer terms missing but present in retrieved evidence --> E[Fix prompt / extraction]
+    C -- evidence_kind missing --> F[Fix retrieval planner / ranking]
+    C -- citations invalid --> G[Fix structured answer citation rules]
+    C -- structured JSON invalid --> H[Fix JSON prompt/parser]
+    C -- forbidden term appears --> I[Fix over-answering / hallucination guardrails]
 
-    D --> I[Make one small change]
-    E --> I
-    F --> I
-    G --> I
-    H --> I
+    D --> J[Make one small change]
+    E --> J
+    F --> J
+    G --> J
+    H --> J
+    I --> J
 
-    I --> J[Rerun same benchmark]
-    J --> B
+    J --> K[Rerun same benchmark]
+    K --> B
 ```
 
 This loop is the main engineering principle for the project:
@@ -506,44 +519,30 @@ Rerun the same benchmark.
 
 ## 10. Current interpretation of the MIMIC-IV pilot
 
-The MIMIC-IV pilot metrics show:
+Current v4 result:
 
 ```text
+records: 25
+passed: 25
+failed: 0
 required_evidence_kind_recall = 1.0
-top1_evidence_kind_accuracy ≈ 0.6
-required_evidence_kind_mrr ≈ 0.8
 structured_answer_validity = 1.0
 evidence_citation_validity = 1.0
 ```
 
-Interpretation:
+Important interpretation:
 
 ```text
-The right evidence kind usually reaches the model.
-Ranking is only moderate.
-The main current failure is answer extraction/copying from list-style evidence.
+The previous v3 failure was not primarily an LLM-copying problem.
+The --chunks debug join showed missing expected terms were absent from retrieved chunk text.
+Keeping compact generated structured-list documents atomic fixed the evidence visibility issue.
 ```
 
-Common failure types:
+Current caution:
 
 ```text
-ICD-coded diagnoses are retrieved but not copied exactly.
-ICD-coded procedures are retrieved but answered as not_found.
-Some medications are retrieved but omitted.
-```
-
-The likely next change is a prompt/extraction improvement for list-style questions involving:
-
-```text
-diagnosis_list
-procedure_list
-medication_list
-```
-
-Potential instruction:
-
-```text
-If the question asks for coded diagnoses, coded procedures, or medications, and the retrieved evidence contains a list, copy relevant list items verbatim from that evidence. Do not summarize, normalize, or omit list items. If list evidence is present, do not answer not_found.
+Top-1 evidence_kind accuracy is still moderate.
+Do not tune ranking unless larger evaluations show ranking-driven failures.
 ```
 
 ---
@@ -579,7 +578,7 @@ Use `PROCESSED_DIR` to avoid checkpoint contamination across corpora:
 
 ```bash
 PROCESSED_DIR="$PWD/Data/processed_mimic_iv_pilot_v4" \
-COLLECTION_NAME=ehr_chunks_mimic_iv_pilot_v2 \
+COLLECTION_NAME=ehr_chunks_mimic_iv_pilot_v4 \
 python scripts/index_qdrant_medcpt.py
 ```
 
@@ -620,7 +619,7 @@ python scripts/test_ehr_retrieval_api.py \
   --questions-file eval/mimic_iv_pilot_questions.jsonl \
   --structured \
   --show-answer \
-  --out Data/processed_mimic_iv_pilot/mimic_iv_pilot_results.jsonl
+  --out Data/processed_mimic_iv_pilot_v4/mimic_iv_pilot_results_v4.jsonl
 ```
 
 Evaluate:
@@ -629,8 +628,9 @@ Evaluate:
 python scripts/evaluate_synthetic_results.py \
   --questions eval/mimic_iv_pilot_questions.jsonl \
   --expected eval/mimic_iv_pilot_expected_checks.jsonl \
-  --results Data/processed_mimic_iv_pilot/mimic_iv_pilot_results.jsonl \
-  --out Data/processed_mimic_iv_pilot/mimic_iv_pilot_metrics.json
+  --results Data/processed_mimic_iv_pilot_v4/mimic_iv_pilot_results_v4.jsonl \
+  --chunks Data/processed_mimic_iv_pilot_v4/chunks.jsonl \
+  --out Data/processed_mimic_iv_pilot_v4/mimic_iv_pilot_metrics_v4_debug.json
 ```
 
 

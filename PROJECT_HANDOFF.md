@@ -795,11 +795,16 @@ eval/synthetic_bariatric_smoke_questions.jsonl
 
 The deterministic checker validates expected answer terms, required source document types, forbidden answer terms, and basic structured-answer shape.
 
-Current synthetic checker baseline:
+Current synthetic PDF classifier benchmark:
 
 ```text
-Synthetic bariatric PDF classifier benchmark: 12/12
-MIMIC-IV direct pilot v4: 25/25
+records: 12
+passed: 12
+failed: 0
+answer_term_coverage: 1.0
+required_source_document_type_recall: 1.0
+structured_answer_validity: 1.0
+evidence_citation_validity: 1.0
 ```
 
 Important design decision:
@@ -915,13 +920,23 @@ git checkout feature/public-ehr-rag-testbed
 git pull origin feature/public-ehr-rag-testbed
 ```
 
-### Clean rebuild into test collection
+### Clean synthetic PDF rebuild into test collection
 
-Use a fresh collection name when validating chunk/index changes:
+Use `CLEAN_BUILD=1` to avoid stale JSONL/checkpoint reuse:
 
 ```bash
-COLLECTION_NAME=ehr_chunks_test_v3 ./run_build.sh
-COLLECTION_NAME=ehr_chunks_test_v3 ./start_services.sh
+PROCESSED_DIR="$PWD/Data/processed_classifier_synth_test" \
+PATIENTS_ROOT="$PWD/Data/public_testbed/synthetic_bariatric_pdf/Test Patients" \
+COLLECTION_NAME=ehr_chunks_classifier_synth_test \
+CLEAN_BUILD=1 \
+./run_build.sh
+```
+
+Restart APIs against the same processed directory and collection:
+
+PROCESSED_DIR="$PWD/Data/processed_classifier_synth_test" \
+COLLECTION_NAME=ehr_chunks_classifier_synth_test \
+./restart_services.sh
 ```
 
 If processed corpus is stale, back up these before rebuilding:
@@ -981,68 +996,58 @@ With document-type filter:
 python scripts/test_keyword_retrieval.py   --patient-id 021494762   --query "multivitamin calcium citrate vitamin D B12 iron thiamine"   --document-types nutrition_note,clinic_note,discharge_summary,medication_list   --limit 10
 ```
 
-### Synthetic bariatric testbed generation
+### Synthetic bariatric PDF classifier benchmark
+
+Generate or refresh the synthetic PDFs if needed:
 
 ```bash
 python scripts/create_synthetic_bariatric_testbed.py --force
 ```
-Build/index into a separate synthetic Qdrant collection:
+
+Build/index:
 
 ```bash
+PROCESSED_DIR="$PWD/Data/processed_classifier_synth_test" \
 PATIENTS_ROOT="$PWD/Data/public_testbed/synthetic_bariatric_pdf/Test Patients" \
-COLLECTION_NAME=ehr_chunks_synth_v1 \
+COLLECTION_NAME=ehr_chunks_classifier_synth_test \
+CLEAN_BUILD=1 \
 ./run_build.sh
 ```
 
-Restart APIs against the synthetic collection:
+Restart APIs:
 
 ```bash
-COLLECTION_NAME=ehr_chunks_synth_v1 ./restart_services.sh
+PROCESSED_DIR="$PWD/Data/processed_classifier_synth_test" \
+COLLECTION_NAME=ehr_chunks_classifier_synth_test \
+./restart_services.sh
 ```
 
-Run the three deterministic synthetic baseline questions:
+Run all synthetic smoke questions:
 
 ```bash
 python scripts/test_ehr_retrieval_api.py \
-  --patient-id SYN001 \
-  --question "Is there evidence of B12, iron, ferritin, thiamine, vitamin D, calcium, or PTH monitoring?" \
+  --questions-file eval/synthetic_bariatric_smoke_questions.jsonl \
   --structured \
-  --out Data/processed/synth_SYN001_micronutrients_result_v2.jsonl \
-  --report-out Data/processed/synth_SYN001_micronutrients_report_v2.md
-
-python scripts/test_ehr_retrieval_api.py \
-  --patient-id SYN002 \
-  --question "Is there evidence of micronutrient laboratory monitoring?" \
-  --structured \
-  --out Data/processed/synth_SYN002_micronutrients_result_v2.jsonl \
-  --report-out Data/processed/synth_SYN002_micronutrients_report_v2.md
-
-python scripts/test_ehr_retrieval_api.py \
-  --patient-id SYN003 \
-  --question "What thiamine or vitamin supplementation is documented?" \
-  --structured \
-  --out Data/processed/synth_SYN003_thiamine_result_v3.jsonl \
-  --report-out Data/processed/synth_SYN003_thiamine_report_v3.md
+  --show-answer \
+  --out Data/processed_classifier_synth_test/synth_results_classifier_test.jsonl
 ```
 
-Run the synthetic checker:
+Evaluate:
 
 ```bash
-python scripts/check_synthetic_smoke_results.py \
-  Data/processed/synth_SYN001_micronutrients_result_v2.jsonl \
-  Data/processed/synth_SYN002_micronutrients_result_v2.jsonl \
-  Data/processed/synth_SYN003_thiamine_result_v3.jsonl \
-  --show-passing
+python scripts/evaluate_synthetic_results.py \
+  --questions eval/synthetic_bariatric_smoke_questions.jsonl \
+  --expected eval/synthetic_bariatric_expected_checks.jsonl \
+  --results Data/processed_classifier_synth_test/synth_results_classifier_test.jsonl \
+  --out Data/processed_classifier_synth_test/synth_metrics_classifier_test.json
 ```
-
 Expected result:
 
 ```text
-records: 3
-passed: 3
+records: 12
+passed: 12
 failed: 0
 ```
-
 ---
 
 ## 7. Latest validation results
@@ -1086,7 +1091,43 @@ postoperative lab-result absence
 postoperative leak imaging absence
 ```
 
-#### MIMIC-IV direct pilot v4
+### MIMIC-IV direct pilot v4 benchmark
+
+Build the direct MIMIC-IV pilot corpus:
+
+```bash
+python scripts/build_mimic_iv_pilot_corpus.py \
+  --limit-admissions 10 \
+  --max-questions 25 \
+  --processed-dir Data/processed_mimic_iv_pilot_v4 \
+  --force
+```
+
+Index:
+
+```bash
+PROCESSED_DIR="$PWD/Data/processed_mimic_iv_pilot_v4" \
+COLLECTION_NAME=ehr_chunks_mimic_iv_pilot_v4 \
+python scripts/index_qdrant_medcpt.py
+```
+
+Restart APIs:
+
+```bash
+PROCESSED_DIR="$PWD/Data/processed_mimic_iv_pilot_v4" \
+COLLECTION_NAME=ehr_chunks_mimic_iv_pilot_v4 \
+./restart_services.sh
+```
+
+Run questions:
+
+```bash
+python scripts/test_ehr_retrieval_api.py \
+  --questions-file eval/mimic_iv_pilot_questions.jsonl \
+  --structured \
+  --show-answer \
+  --out Data/processed_mimic_iv_pilot_v4/mimic_iv_pilot_results_v4.jsonl
+```
 
 Validated after atomic structured chunks.
 
@@ -1331,16 +1372,18 @@ https://github.com/Kelebrimbor97/Bariatric_Document_version
 Use branch:
 feature/public-ehr-rag-testbed
 
-This is a local bariatric/EHR document RAG project using FastAPI, Qdrant, MedCPT embeddings/reranker, vLLM/Qwen, and OpenWebUI.
+First, read PROJECT_HANDOFF.md from the repo and use it as the source of truth for current project state.
 
-Important: ask me before referring to or modifying the repo unless I explicitly ask you to connect to it. Use baby steps. If a change is tiny, give me the exact edit; if larger, make a small isolated repo change and verify it.
+This is a local bariatric/EHR document RAG project using FastAPI, Qdrant, MedCPT embeddings/reranker, vLLM/Qwen, and OpenWebUI, but we are NOT focusing on OpenWebUI polish right now.
 
+Important working rules:
+- Ask me before referring to or modifying the repo unless I explicitly ask you to connect to it.
+- Use baby steps.
+- If a change is tiny, give me the exact edit and let me make/push it locally.
+- If a change is larger, make one small isolated repo change, then verify it.
+- Do not over-engineer rigid schemas because the notes/PDFs are extremely unstructured.
+- Prioritize flexibility and testability over perfect schemas.
 
----
-
-### Update the “Suggested prompt for a new chat” block
-
-```text
 Current branch already has:
 - content-first PDF document classifier in src/document_classifier.py
 - path_parser.py retained for path metadata and optional low-confidence path hints
@@ -1369,9 +1412,6 @@ Validated:
 
 Current intended direction:
 Expand public-data coverage carefully, likely MIMIC radiology and lab events next. Do not tune BM25/ranking by gut feel.
-
-Next planned task:
-Build metrics-based evaluation for the synthetic/public-safe testbed. Start with retrieval and structured-answer metrics before tuning BM25, prompts, reranking, or adding agentic workflows.
 ```
 
 ---
