@@ -17,6 +17,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.chunking import chunk_text_with_sections
 
 
+ATOMIC_EVIDENCE_KINDS = {
+    "admission_summary",
+    "diagnosis_list",
+    "procedure_list",
+    "medication_list",
+}
+
+
 @dataclass
 class AdmissionCase:
     subject_id: str
@@ -172,6 +180,24 @@ def document_meta(
     }
 
 
+def chunk_direct_text(text: str, evidence_kind: str) -> tuple[str, list[dict[str, Any]]]:
+    """Chunk generated direct-text documents.
+
+    Compact structured list documents are kept atomic so the full list is visible
+    when that source is retrieved. Long discharge summaries still use the normal
+    section-aware chunker.
+    """
+    if evidence_kind in ATOMIC_EVIDENCE_KINDS:
+        return "atomic", [
+            {
+                "chunk_text": text,
+                "section_title": None,
+                "section_chunk_index": 0,
+            }
+        ]
+    return "section_aware", chunk_text_with_sections(text)
+
+
 def add_document(
     documents: list[dict[str, Any]],
     chunks: list[dict[str, Any]],
@@ -188,18 +214,28 @@ def add_document(
 
     file_name = Path(relative_path).name
     meta = document_meta(case, relative_path, file_name, document_type, evidence_kind, source_table)
-    documents.append({**meta, "n_pages": 1, "raw_text": text, "source_format": "direct_text"})
+    chunking_strategy, page_chunks = chunk_direct_text(text, evidence_kind)
+    documents.append(
+        {
+            **meta,
+            "n_pages": 1,
+            "raw_text": text,
+            "source_format": "direct_text",
+            "chunking_strategy": chunking_strategy,
+        }
+    )
 
     stem = Path(file_name).stem
-    for idx, ch in enumerate(chunk_text_with_sections(text)):
+    for idx, ch in enumerate(page_chunks):
         section_title = ch.get("section_title")
-        section_key = section_title or "none"
+        section_key = section_title or chunking_strategy
         chunks.append(
             {
                 **meta,
                 "page_num": 1,
                 "section_title": section_title,
                 "section_chunk_index": ch.get("section_chunk_index"),
+                "chunking_strategy": chunking_strategy,
                 "chunk_id": f"{case.patient_id}::{stem}::p1::s{section_key}::c{idx}",
                 "chunk_text": ch["chunk_text"],
             }
