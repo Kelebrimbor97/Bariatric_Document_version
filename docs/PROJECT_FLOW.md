@@ -4,6 +4,13 @@ This document captures the current working idea for the project: a local clinica
 
 The project currently supports both the original PDF-oriented private/synthetic bariatric workflow and a newer direct-text MIMIC-IV pilot workflow.
 
+Current validated coverage:
+
+```text
+Synthetic bariatric PDF classifier benchmark: 12/12
+MIMIC-IV direct pilot v4: 25/25
+```
+
 ---
 
 ## 1. High-level idea
@@ -101,7 +108,34 @@ flowchart TD
 
 This remains important because the original project target is messy local clinical PDFs.
 
+PDF document classification is content-first:
+
+```text
+explicit metadata
+→ filename hint
+→ content inference
+→ optional path hint
+→ unknown
+```
+
+path_parser.py provides path metadata and path hints. document_classifier.py makes the final document-type decision. Path fallback is disabled by default via:
+
+```bash
+USE_PATH_HINTS_FOR_DOCUMENT_TYPE=false
+```
+
 ### 2.2 Direct structured/text ingestion
+
+Compact generated MIMIC structured documents are kept atomic:
+
+```text
+admission_summary
+diagnosis_list
+procedure_list
+medication_list
+```
+
+This prevents evidence-kind recall from hiding exact-term visibility failures.
 
 Used for:
 
@@ -296,7 +330,37 @@ The structured answer is useful for evaluation and downstream UI/API workflows, 
 
 ---
 
-## 6. Evaluation flow
+## 6. Current coverage
+
+```text
+| Benchmark | Scope | Result |
+|---|---|---:|
+| Synthetic bariatric PDFs | PDF ingestion, document classification, retrieval, structured answers, citation validity | 12/12 |
+| MIMIC-IV direct pilot v4 | admissions, discharge, diagnoses, procedures, prescriptions | 25/25 |
+```
+
+Validated synthetic document types:
+
+```text
+clinic_note
+discharge_summary
+lab_report
+medication_list
+nutrition_note
+operative_report
+radiology
+```
+Validated MIMIC evidence kinds:
+
+```text
+admission_summary
+diagnosis_list
+procedure_list
+medication_list
+discharge_summary
+```
+
+## 7. Evaluation flow
 
 ```mermaid
 flowchart TD
@@ -370,7 +434,7 @@ required_evidence_kind_mrr
 
 ---
 
-## 7. Benchmark ladder
+## 8. Benchmark ladder
 
 ```mermaid
 flowchart TD
@@ -408,7 +472,7 @@ MIMIC-IV pilot:
 
 ---
 
-## 8. Development loop
+## 9. Development loop
 
 ```mermaid
 flowchart TD
@@ -442,7 +506,7 @@ Rerun the same benchmark.
 
 ---
 
-## 9. Current interpretation of the MIMIC-IV pilot
+## 10. Current interpretation of the MIMIC-IV pilot
 
 The MIMIC-IV pilot metrics show:
 
@@ -486,7 +550,7 @@ If the question asks for coded diagnoses, coded procedures, or medications, and 
 
 ---
 
-## 10. Important design decisions so far
+## 11. Important design decisions so far
 
 ### Keep the evaluator generic
 
@@ -523,7 +587,7 @@ python scripts/index_qdrant_medcpt.py
 
 ---
 
-## 11. Typical run commands
+## 12. Typical run commands
 
 Build the direct MIMIC-IV pilot corpus:
 
@@ -569,4 +633,19 @@ python scripts/evaluate_synthetic_results.py \
   --expected eval/mimic_iv_pilot_expected_checks.jsonl \
   --results Data/processed_mimic_iv_pilot/mimic_iv_pilot_results.jsonl \
   --out Data/processed_mimic_iv_pilot/mimic_iv_pilot_metrics.json
+```
+
+
+## 13. Current gaps
+
+```text
+MIMIC-IV-Note radiology.csv.gz
+MIMIC-IV labevents.csv.gz + d_labitems.csv.gz
+microbiology events
+pathology-style narrative reports
+longitudinal / multi-admission timelines
+temporal lab trends
+multi-hop questions across notes + labs + meds
+large-scale MIMIC evaluation beyond 10 admissions / 25 questions
+real private bariatric PDF regression after content-first classifier
 ```

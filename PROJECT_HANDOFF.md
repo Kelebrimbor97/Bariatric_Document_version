@@ -1,6 +1,6 @@
 # Bariatric Document RAG Project — Handoff Notes
 
-_Last updated in chat: 2026-04-29 — synthetic bariatric testbed + structured checker baseline added_
+_Last updated in chat: 2026-04-30 — content-first PDF classification, clean build support, MIMIC-IV v4 atomic structured chunks, and current synthetic/MIMIC metrics baseline_
 
 This file is intended to be pasted or uploaded into a new ChatGPT chat so the next chat can continue without needing the oversized previous thread.
 
@@ -48,6 +48,19 @@ The system should eventually support:
 7. A future public/synthetic testbed before relying on private bariatric data.
 
 The immediate working goal in this branch has been to implement CLI-RAG/EHR-RAG-inspired retrieval improvements without fully reproducing either paper.
+
+
+```text
+Synthetic bariatric PDF classifier benchmark:
+  records: 12
+  passed: 12
+  failed: 0
+
+MIMIC-IV direct pilot v4:
+  records: 25
+  passed: 25
+  failed: 0
+```
 
 ---
 
@@ -162,30 +175,65 @@ export COLLECTION_NAME=...
 
 ## 5. Current implemented features on `feature/public-ehr-rag-testbed`
 
-### 5.1 Clinical document taxonomy
+### 5.1 Content-first document classification for PDFs
 
-File:
+Files:
 
 ```text
 src/path_parser.py
+src/document_classifier.py
+scripts/build_ehr_corpus.py
 ```
 
-Now infers `document_type` from folder names/path/file names.
+The project no longer treats folder path as the default source of truth for document_type.
 
-Common document types:
+Current PDF document-type decision order:
 
 ```text
-operative_report
-discharge_summary
-nutrition_note
-lab_report
-medication_list
-clinic_note
-history_and_physical
-progress_note
+explicit source metadata
+→ filename hint
+→ content inference
+→ optional path hint
+→ unknown
+```
+
+path_parser.py still extracts path metadata and path hints, but document_classifier.py now makes the final document-type decision.
+
+PDF chunk/document metadata now includes:
+
+```text
+document_type
+document_type_source
+document_type_confidence
+document_type_signals
+path_document_type_hint
+```
+
+Path fallback is disabled by default:
+
+```bash
+USE_PATH_HINTS_FOR_DOCUMENT_TYPE=false
+```
+
+It can be enabled as a low-confidence fallback:
+
+```bash
+USE_PATH_HINTS_FOR_DOCUMENT_TYPE=true
+```
+
+Supported deterministic content/filename classes currently include:
+
+```text
 radiology
 pathology
-patient_instructions
+lab_report
+operative_report
+discharge_summary
+medication_list
+nutrition_note
+history_and_physical
+progress_note
+clinic_note
 unknown
 ```
 
@@ -302,7 +350,37 @@ This prevents accidentally polluting the original/default `ehr_chunks` collectio
 
 ---
 
-### 5.6 Shell scripts use test collection by default
+### 5.6 Clean build support
+
+Files:
+
+```text
+scripts/build_ehr_corpus.py
+run_build.sh
+```
+
+PDF builds now support a clean build option to prevent stale checkpoint/output reuse.
+
+Use:
+
+```bash
+CLEAN_BUILD=1 ./run_build.sh
+```
+
+This removes generated files inside PROCESSED_DIR before rebuilding:
+
+```text
+documents.jsonl
+chunks.jsonl
+build_ehr_corpus.ckpt
+index_qdrant_medcpt.ckpt
+build_ehr_corpus.errors.jsonl
+```
+
+It does not remove source PDFs, eval files, logs, or Qdrant collections.
+
+
+### 5.7 Shell scripts use test collection by default
 
 Files:
 
@@ -334,7 +412,7 @@ COLLECTION_NAME=ehr_chunks ./run_build.sh
 
 ---
 
-### 5.7 Retrieval planner
+### 5.8 Retrieval planner
 
 File:
 
@@ -372,7 +450,7 @@ The planner is deliberately conservative and deterministic.
 
 ---
 
-### 5.8 Planned retrieval in EHR service
+### 5.9 Planned retrieval in EHR service
 
 File:
 
@@ -409,7 +487,7 @@ retrieval_source
 
 ---
 
-### 5.9 API exposes retrieval diagnostics
+### 5.10 API exposes retrieval diagnostics
 
 File:
 
@@ -435,7 +513,7 @@ retrieval_source: dense | keyword | both
 
 ---
 
-### 5.10 Structured answer mode
+### 5.11 Structured answer mode
 
 Files:
 
@@ -484,7 +562,7 @@ Important conclusion from the chat:
 
 ---
 
-### 5.11 Structured smoke-test script
+### 5.12 Structured smoke-test script
 
 File:
 
@@ -509,7 +587,7 @@ python scripts/test_ehr_retrieval_api.py   --patient-id 021494762   --questions-
 
 ---
 
-### 5.12 Structured smoke-result checker
+### 5.13 Structured smoke-result checker
 
 File:
 
@@ -544,7 +622,7 @@ Do not block on this. Keep flexibility for unstructured notes.
 
 ---
 
-### 5.13 Keyword/BM25 retrieval module
+### 5.14 Keyword/BM25 retrieval module
 
 File:
 
@@ -610,7 +688,7 @@ Important clarification:
 
 ---
 
-### 5.14 Keyword retrieval smoke-test script
+### 5.15 Keyword retrieval smoke-test script
 
 File:
 
@@ -641,7 +719,7 @@ This validates standalone BM25 loading/search.
 
 ---
 
-### 5.15 Retrieval source inspection helper
+### 5.16 Retrieval source inspection helper
 
 File:
 
@@ -671,7 +749,7 @@ Do not tune BM25 yet based on this one noisy hit.
 
 ---
 
-### 5.16 Synthetic/public-safe bariatric testbed
+### 5.17 Synthetic/public-safe bariatric testbed
 
 Files:
 ```text
@@ -732,7 +810,7 @@ A verifier was considered, but it added complexity without clear benefit.
 Prefer deterministic synthetic regression checks for now.
 ```
 
-### 5.17 Structured answer prompt tightening
+### 5.18 Structured answer prompt tightening
 
 File:
 
@@ -767,6 +845,67 @@ Do not add extra not_found findings for unrelated labs, vitamins, diagnoses, or 
 Only put items in missing_information if the user explicitly requested them and they are absent from the evidence.
 For broad "what is documented" questions, do not list unrelated absent items in missing_information.
 ```
+
+
+### 5.19 Direct MIMIC-IV pilot corpus builder
+
+File:
+
+```text
+scripts/build_mimic_iv_pilot_corpus.py
+```
+
+This direct builder avoids the old inefficient path:
+
+```text
+CSV/text → PDF → PDF extraction → chunks
+```
+
+and instead writes:
+
+```text
+MIMIC CSV/text → documents.jsonl + chunks.jsonl → Qdrant
+```
+
+Current source tables:
+
+```text
+MIMIC-IV-Note discharge.csv.gz
+MIMIC-IV admissions.csv.gz
+MIMIC-IV diagnoses_icd.csv.gz
+MIMIC-IV d_icd_diagnoses.csv.gz
+MIMIC-IV procedures_icd.csv.gz
+MIMIC-IV d_icd_procedures.csv.gz
+MIMIC-IV prescriptions.csv.gz
+```
+
+Current evidence kinds:
+
+```text
+admission_summary
+diagnosis_list
+procedure_list
+medication_list
+discharge_summary
+```
+
+Important v4 fix:
+
+Compact generated structured documents are now kept atomic:
+
+```text
+admission_summary
+diagnosis_list
+procedure_list
+medication_list
+```
+
+Long discharge summaries still use section-aware chunking.
+
+Reason:
+
+The v3 debug evaluator showed that missing expected answer terms were absent from retrieved evidence text even though the correct evidence_kind was present. Keeping compact structured lists atomic fixed the issue.
+
 ## 6. Important test commands
 
 ### Pull current branch
@@ -908,122 +1047,84 @@ failed: 0
 
 ## 7. Latest validation results
 
-### Clean metadata validation
+### Synthetic bariatric PDF classifier benchmark
 
-After truly clean rebuild into `ehr_chunks_test_v3`, metadata looked good:
-
-```text
-sources: 48
-
-document_type counts:
-nutrition_note: 20
-operative_report: 18
-unknown: 5
-clinic_note: 4
-radiology: 1
-
-section_title counts:
-None: 37
-RADREPORT: 4
-Procedure History: 3
-FINDINGS: 2
-LEFT ADNEXA: 1
-IMPRESSION: 1
-```
-
-Interpretation:
+Validated after content-first document classification and clean build support.
 
 ```text
-document_type metadata works
-section_title metadata works enough
-false section headers were reduced
-None is acceptable because many notes are unstructured
-```
-
-### Structured checker result
-
-Structured mode works, but checker showed:
-
-```text
-records: 6
-passed: 3
-failed: 3
-```
-
-Main issue:
-
-```text
-status=not_found but evidence is non-empty
-```
-
-Decision:
-
-```text
-Do not block on this. Keep flexibility for unstructured notes.
-```
-
-### Keyword/BM25 test
-
-Standalone keyword retrieval tested successfully:
-
-```text
-hits=8 for all default queries
-```
-
-### Hybrid dense + BM25 `/ask` validation
-
-BM25 keyword retrieval is now wired into the main `/ask` path.
-
-Current flow:
-
-```text
-retrieval planner
-→ dense planned retrieval
-→ BM25 retrieval using planner primary query + subqueries
-→ deduplicate by chunk_id
-→ broad dense fallback
-→ MedCPT rerank
-→ answer / structured answer
-```
-
-The `/ask` source metadata now includes:
-
-```text
-retrieval_source: dense | keyword | both
-```
-
-Latest structured smoke test:
-
-```text
-records: 6
-passed: 6
+records: 12
+passed: 12
 failed: 0
-
-finding status counts:
-found: 13
-not_found: 7
-
-retrieval_source counts:
-both: 25
-dense: 22
-keyword: 1
-missing: 0
-
-source document_type counts:
-nutrition_note: 20
-operative_report: 16
-clinic_note: 6
-unknown: 5
-radiology: 1
+evidence_grounded_task_success_rate: 1.0
+answer_term_coverage: 1.0
+required_source_document_type_recall: 1.0
+structured_answer_validity: 1.0
+evidence_citation_validity: 1.0
 ```
 
-Interpretation:
+Validated document types:
+
+clinic_note
+discharge_summary
+lab_report
+medication_list
+nutrition_note
+operative_report
+radiology
+
+Validated question types:
 
 ```text
-BM25 is not overwhelming dense retrieval.
-Most final chunks are either dense-only or dense+keyword.
-One keyword-only chunk survived reranking, suggesting BM25 adds some recall.
-The API response model correctly exposes retrieval_source.
+bariatric procedure / surgical history
+planned bariatric procedure
+prior bariatric surgery absence
+micronutrient laboratory monitoring
+vitamin / micronutrient supplementation
+thiamine measurement/order absence
+postoperative complication / follow-up issue
+postoperative lab-result absence
+postoperative leak imaging absence
+```
+
+#### MIMIC-IV direct pilot v4
+
+Validated after atomic structured chunks.
+
+```text
+records: 25
+passed: 25
+failed: 0
+evidence_grounded_task_success_rate: 1.0
+answer_term_coverage: 1.0
+required_source_document_type_recall: 1.0
+required_evidence_kind_recall: 1.0
+structured_answer_validity: 1.0
+evidence_citation_validity: 1.0
+```
+
+Validated question types:
+
+```text
+admission type
+discharge location / disposition
+ICD-coded diagnoses
+ICD-coded procedures
+medications documented for admission
+```
+
+Important interpretation:
+
+```text
+The previous MIMIC failure was not primarily an LLM-copying problem.
+The --chunks debug join showed missing terms were absent from retrieved chunk text.
+Atomic structured-list chunks fixed the evidence visibility problem.
+```
+
+Remaining note:
+
+```text
+Top-1 evidence_kind accuracy is still moderate, but end-to-end task success is now 25/25.
+Do not tune ranking unless larger evaluations show ranking-driven failures.
 ```
 
 ---
@@ -1135,41 +1236,48 @@ Do not spend too much time on perfect section detection or overly strict structu
 
 ## 10. Recommended next step
 
-The current stable baseline is:
+Current stable baseline:
 
 ```text
-Private clean metadata + hybrid retrieval baseline works.
-BM25 is conservatively integrated into /ask.
-The only keyword-only private source was noisy but harmless.
-Synthetic/public-safe bariatric PDF testbed works.
-Synthetic deterministic checker covers all 7 synthetic smoke questions and passes 7/7.
-Structured prompt now behaves better for broad "what is documented?" questions.
+Synthetic bariatric PDF classifier benchmark: 12/12
+MIMIC-IV direct pilot v4: 25/25
 ```
 
-Current recommendation:
+Do not prioritize:
 
 ```text
-Do not tune BM25 yet.
-Do not add agentic verifier/retry workflows yet.
-Do not prioritize OpenWebUI polish yet.
-Move next toward metrics-based evaluation using the synthetic/public-safe testbed.
-Use deterministic metrics before changing retrieval behavior.
+OpenWebUI polish
+agentic verifier/retry workflows
+BM25 tuning by gut feel
+ranking tuning before larger evidence
 ```
 
-Possible next tasks:
+Recommended next direction:
 
-1. Add metrics-based evaluation for the synthetic testbed:
-   - retrieval hit rate / recall@k for expected source document types
-   - top-rank source quality
-   - MRR-style source ranking metric
-   - structured-answer schema validity
-   - expected answer term coverage
-   - forbidden term / hallucination checks
-2. Add a machine-readable expected-evidence file for the synthetic cases.
-3. Extend `scripts/check_synthetic_smoke_results.py` or add a new `scripts/evaluate_synthetic_results.py` that emits a metrics summary JSON.
-4. Use metrics to compare retrieval configurations before tuning BM25, dense retrieval, reranking, or prompts.
-5. Later, add a larger synthetic/public-safe testbed with more diverse note styles.
-6. Consider branch splitting before PR/merge because the feature branch is now large.
+```text
+Expand public-data coverage carefully.
+```
+
+Concrete next baby step:
+
+```text
+Add direct MIMIC radiology and/or lab-event coverage.
+```
+
+Likely next extensions:
+
+
+1. Add radiology.csv.gz from MIMIC-IV-Note:
+  - document_type = radiology
+  - evidence_kind = radiology_report
+  - source_table = radiology
+2. Add labevents.csv.gz + d_labitems.csv.gz from MIMIC-IV:
+  - document_type = lab_report
+  - evidence_kind = lab_result_table
+  - source_table = labevents
+3. Generate small deterministic expected checks for these new evidence kinds.
+4. Re-run metrics before changing retrieval/ranking.
+
 ---
 
 ## 11. Do not forget
@@ -1227,30 +1335,42 @@ This is a local bariatric/EHR document RAG project using FastAPI, Qdrant, MedCPT
 
 Important: ask me before referring to or modifying the repo unless I explicitly ask you to connect to it. Use baby steps. If a change is tiny, give me the exact edit; if larger, make a small isolated repo change and verify it.
 
+
+---
+
+### Update the “Suggested prompt for a new chat” block
+
+Replace its “Current branch already has” and “Validated” portions with:
+
+```text
 Current branch already has:
-- document_type taxonomy in src/path_parser.py
+- content-first PDF document classifier in src/document_classifier.py
+- path_parser.py retained for path metadata and optional low-confidence path hints
+- USE_PATH_HINTS_FOR_DOCUMENT_TYPE=false by default
+- document_type taxonomy and classification diagnostics
 - section-aware chunking in src/chunking.py
-- build/index scripts writing document_type/section_title into chunks and Qdrant
-- configurable COLLECTION_NAME, with shell scripts defaulting to ehr_chunks_test
+- clean build support via CLEAN_BUILD=1 ./run_build.sh
+- configurable PROCESSED_DIR and COLLECTION_NAME
 - deterministic retrieval planner in src/retrieval_planner.py
-- planned dense retrieval and broad fallback in src/ehr_rag_service.py
-- /ask response exposing retrieval_plan and rich source metadata
+- planned dense retrieval, BM25 keyword retrieval, broad fallback, and MedCPT reranking in src/ehr_rag_service.py
+- retrieval_source diagnostics exposed in /ask sources as dense | keyword | both
+- evidence_kind/source_table support for direct MIMIC structured data
 - optional structured=true answer mode
-- structured smoke test and checker scripts
-- standalone BM25 keyword retriever in src/keyword_retrieval.py
-- standalone keyword smoke test script
+- synthetic bariatric PDF testbed
+- metrics evaluator with optional --chunks evidence visibility diagnostics
+- direct MIMIC-IV pilot corpus builder in scripts/build_mimic_iv_pilot_corpus.py
+- atomic chunks for compact MIMIC structured sources: admission_summary, diagnosis_list, procedure_list, medication_list
 
 Validated:
-- clean metadata collection worked
-- section false positives were reduced
-- structured=true returned parseable JSON
-- standalone BM25 keyword retrieval returned hits=8 for default queries
-- BM25 is wired into `/ask` conservatively
-- latest hybrid structured smoke test passed 6/6
-- keyword-only source was inspected and was noisy but harmless
-- synthetic bariatric PDF testbed added
-- deterministic synthetic checker covers all 7 synthetic smoke questions and passes 7/7
-- structured prompt was tightened to reduce over-answering
+- synthetic bariatric PDF classifier benchmark passes 12/12
+- MIMIC-IV direct pilot v4 passes 25/25
+- structured answer validity is 1.0 on both current benchmarks
+- citation validity is 1.0 on both current benchmarks
+- MIMIC v3 failure was diagnosed with --chunks debug as evidence visibility/chunking, not LLM copying
+- atomic structured chunks fixed MIMIC pilot from 14/25 to 25/25
+
+Current intended direction:
+Expand public-data coverage carefully, likely MIMIC radiology and lab events next. Do not tune BM25/ranking by gut feel.
 
 Next planned task:
 Build metrics-based evaluation for the synthetic/public-safe testbed. Start with retrieval and structured-answer metrics before tuning BM25, prompts, reranking, or adding agentic workflows.
