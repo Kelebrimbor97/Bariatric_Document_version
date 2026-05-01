@@ -931,34 +931,12 @@ COLLECTION_NAME=ehr_chunks_classifier_synth_test \
 CLEAN_BUILD=1 \
 ./run_build.sh
 ```
-
 Restart APIs against the same processed directory and collection:
 
+```bash
 PROCESSED_DIR="$PWD/Data/processed_classifier_synth_test" \
 COLLECTION_NAME=ehr_chunks_classifier_synth_test \
 ./restart_services.sh
-```
-
-If processed corpus is stale, back up these before rebuilding:
-
-```bash
-mkdir -p Data/processed/backups
-
-ts=$(date +%Y%m%d_%H%M%S)
-
-for f in   Data/processed/documents.jsonl   Data/processed/chunks.jsonl   Data/processed/build_ehr_corpus.ckpt   Data/processed/index_qdrant_medcpt.ckpt
-do
-  if [ -f "$f" ]; then
-    mv "$f" "Data/processed/backups/$(basename "$f").$ts"
-  fi
-done
-```
-
-Then rebuild:
-
-```bash
-COLLECTION_NAME=ehr_chunks_test_v3 ./run_build.sh
-COLLECTION_NAME=ehr_chunks_test_v3 ./start_services.sh
 ```
 
 ### EHR retrieval smoke test
@@ -1069,6 +1047,7 @@ evidence_citation_validity: 1.0
 
 Validated document types:
 
+```text
 clinic_note
 discharge_summary
 lab_report
@@ -1076,6 +1055,7 @@ medication_list
 nutrition_note
 operative_report
 radiology
+```
 
 Validated question types:
 
