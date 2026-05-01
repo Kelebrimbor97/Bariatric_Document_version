@@ -4,6 +4,7 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import argparse
 import json
 import hashlib
 from tqdm import tqdm
@@ -17,6 +18,9 @@ from src.document_classifier import classify_document
 
 ERRORS_FILE = PROCESSED_DIR / "build_ehr_corpus.errors.jsonl"
 CHECKPOINT_FILE = PROCESSED_DIR / "build_ehr_corpus.ckpt"
+DOCUMENTS_FILE = PROCESSED_DIR / "documents.jsonl"
+CHUNKS_FILE = PROCESSED_DIR / "chunks.jsonl"
+INDEX_CHECKPOINT_FILE = PROCESSED_DIR / "index_qdrant_medcpt.ckpt"
 
 
 def find_patient_dirs(root: Path):
@@ -34,6 +38,24 @@ def extract_actual_patient_id(patient_folder_name: str) -> str:
     if " - " in patient_folder_name:
         return patient_folder_name.split(" - ", 1)[1].strip()
     return patient_folder_name.strip()
+
+
+def clear_generated_outputs() -> None:
+    """Remove local generated corpus/index files for a clean rebuild.
+
+    This only touches files inside PROCESSED_DIR that are produced by this build/index
+    pipeline. It does not delete source PDFs, eval files, Qdrant collections, or logs.
+    """
+    for path in [
+        DOCUMENTS_FILE,
+        CHUNKS_FILE,
+        CHECKPOINT_FILE,
+        INDEX_CHECKPOINT_FILE,
+        ERRORS_FILE,
+    ]:
+        if path.exists():
+            print(f"[CLEAN] Removing {path}")
+            path.unlink()
 
 
 def load_processed_pdfs() -> set[str]:
@@ -70,11 +92,28 @@ def log_error(pdf_path: Path, error: Exception) -> None:
         )
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build EHR corpus JSONL from patient PDF folders.")
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help=(
+            "Remove documents.jsonl, chunks.jsonl, build/index checkpoints, and build errors "
+            "from PROCESSED_DIR before building. Use this when switching corpora or schemas."
+        ),
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-    documents_out = PROCESSED_DIR / "documents.jsonl"
-    chunks_out = PROCESSED_DIR / "chunks.jsonl"
+    if args.clean:
+        clear_generated_outputs()
+
+    documents_out = DOCUMENTS_FILE
+    chunks_out = CHUNKS_FILE
 
     processed_pdfs = load_processed_pdfs()
     patient_dirs = list(find_patient_dirs(PATIENTS_ROOT))
@@ -82,6 +121,7 @@ def main():
     print(f"Patients found: {len(patient_dirs)}")
     print(f"Already processed PDFs in checkpoint: {len(processed_pdfs)}")
     print(f"Use path hints for document_type fallback: {USE_PATH_HINTS_FOR_DOCUMENT_TYPE}")
+    print(f"Processed dir: {PROCESSED_DIR}")
 
     with documents_out.open("a", encoding="utf-8") as f_doc, \
          chunks_out.open("a", encoding="utf-8") as f_chunk:
